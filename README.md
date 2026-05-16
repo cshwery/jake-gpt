@@ -109,6 +109,40 @@ Durable artifacts:
 - `backend/reports/companion_relationship_report.md`: canonical relationship report
 - `backend/reports/companion_candidate_review_report.md`: candidate review report
 
+## Companion Graph
+
+The backend exposes a `CompanionGraphService` that loads approved canonical rows from `plant_companion_relationships` and treats plants as graph nodes. Each relationship is an edge with source and target plant slugs, optional cultivar slugs, relationship type, confidence, evidence type, rationale, direction, distance guidance, and source notes.
+
+Symmetric relationships are queryable in both directions. One-way relationships preserve their stored direction. V0 cultivar behavior falls back to parent plant relationships when cultivar-specific edges are absent.
+
+Edge scores are deterministic:
+
+```text
+relationship_weight * confidence_multiplier * evidence_multiplier
+```
+
+Relationship weights:
+
+- `beneficial`: `+20`
+- `guild`: `+30`
+- `pollinator_support`: `+12`
+- `pest_deterrent`: `+10`
+- `nutrient_support`: `+10`
+- `shade_support`: `+8`
+- `succession`: `+5`
+- `neutral`: `0`
+- `competition`: `-10`
+- `pest_risk`: `-15`
+- `disease_risk`: `-20`
+- `avoid`: `-35`
+- `allelopathy`: `-50`
+
+Confidence multipliers are `high = 1.0`, `medium = 0.65`, and `low = 0.3`.
+
+Evidence multipliers are `peer_reviewed = 1.0`, `extension_service = 1.0`, `master_gardener = 0.85`, `seed_catalog = 0.65`, `manual = 0.6`, `traditional = 0.5`, and `generated_inference = 0.25`.
+
+Negative relationships are handled conservatively. `find_conflicts` reports `avoid`, `disease_risk`, `pest_risk`, `allelopathy`, and `competition` relationships among selected plants with a suggested action. `suggest_companions` scores candidates against selected plants, explains the relevant edges, and excludes candidates with strong negative relationships unless the caller explicitly includes them.
+
 ## Plant Knowledge Commands
 
 ```bash
