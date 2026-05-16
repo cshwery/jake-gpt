@@ -217,6 +217,8 @@ GET /api/gardens/{garden_id}/recommendations/latest
 
 The generate endpoint requires existing garden context. If context has not been generated, it returns a helpful error instead of guessing. Recommendation runs are persisted in `garden_recommendation_runs` for later retrieval.
 
+The legacy `POST /api/plants/suggest` endpoint remains available for the v0 happy path, but it now delegates internally to `GardenRecommendationService` and adapts the rich recommendation result back into the older `PlantSuggestion[]` response shape.
+
 ## Plant Knowledge Commands
 
 ```bash
