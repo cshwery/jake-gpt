@@ -143,6 +143,38 @@ Evidence multipliers are `peer_reviewed = 1.0`, `extension_service = 1.0`, `mast
 
 Negative relationships are handled conservatively. `find_conflicts` reports `avoid`, `disease_risk`, `pest_risk`, `allelopathy`, and `competition` relationships among selected plants with a suggested action. `suggest_companions` scores candidates against selected plants, explains the relevant edges, and excludes candidates with strong negative relationships unless the caller explicitly includes them.
 
+## Garden Context Engine
+
+`GardenContextService` converts a saved garden polygon into structured context for recommendations, layout scoring, calendars, watering plans, warnings, and explanations.
+
+The service orchestrates replaceable providers:
+
+- `GardenGeometryService`: validates GeoJSON polygons and calculates area, centroid, and bounding box. PostGIS remains the preferred persisted area source when available; tests and fallback paths use a local Python approximation.
+- `HardinessZoneProvider`: v0 uses `MockHardinessZoneProvider` with latitude bands. A v1 `LocalPostGISHardinessZoneProvider` should query imported USDA Plant Hardiness Zone polygons in PostGIS.
+- `FrostDateProvider`: v0 uses `MockFrostDateProvider`, approximating last/first frost from hardiness zone. A later provider should calculate median or safety-percentile frost dates from historical daily minimum temperatures.
+- `PrecipitationProvider`: v0 uses `MockPrecipitationProvider`, returning estimated annual and growing-season precipitation plus `low`, `medium`, or `high` category. A later provider should use historical daily precipitation.
+- `SunlightProvider`: v0 uses `UserAssistedSunlightProvider`. The user should override sunlight because satellite imagery alone does not account for trees, buildings, fences, hills, or seasonal shade.
+
+The context API returns nested DTOs:
+
+- geometry: area, centroid, bounding box
+- hardiness: zone, source, confidence
+- frost: estimated last frost, first frost, growing-season days, source, confidence
+- precipitation: annual/growing-season precipitation, category, source, confidence
+- sunlight: category, method, confidence, user override
+- assumptions, warnings, and raw provider metadata
+
+Available endpoints:
+
+```bash
+POST /api/gardens/{garden_id}/context/generate
+POST /api/gardens/{garden_id}/context/recalculate
+GET /api/gardens/{garden_id}/context
+PATCH /api/gardens/{garden_id}/context/sunlight
+```
+
+All v0 climate values are estimates or mock-backed. The UI labels provider source/confidence and displays assumptions and warnings instead of presenting false precision.
+
 ## Plant Knowledge Commands
 
 ```bash
