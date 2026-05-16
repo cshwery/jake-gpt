@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from app.api import deps
 from app.api import gardens as garden_routes
+from app.api import plants as plant_routes
 from app.main import app
 from app.models import Plant, PlantCompanionRelationship, PlantCultivar, PlantFamily
 from app.schemas.garden import GardenContextDTO
@@ -169,6 +170,54 @@ def test_recommendation_api_generate_latest_and_missing_context(monkeypatch: pyt
     assert "Generate garden context" in missing.json()["detail"]
 
 
+def test_legacy_plants_suggest_uses_new_recommendation_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    basil = _plant(2, "basil")
+    fake_db = FakePlantSuggestSession([basil])
+
+    class FakeRecommendationService:
+        def __init__(self, db) -> None:
+            pass
+
+        def recommend_for_garden(self, *args, **kwargs) -> GardenRecommendationResult:
+            return GardenRecommendationResult(
+                garden_id=1,
+                summary="Test",
+                selected=["tomato"],
+                recommendations=[
+                    {
+                        "plant_slug": "basil",
+                        "plant_common_name": "Basil",
+                        "cultivar_recommendations": [],
+                        "recommendation_type": "suggested_companion",
+                        "score": 82.0,
+                        "score_breakdown": {"total_score": 82.0},
+                        "reason_codes": ["COMPANION_WITH_SELECTED_PLANT"],
+                        "warnings": [],
+                        "explanation": "Basil pairs well with tomato.",
+                    }
+                ],
+                warnings=[],
+                excluded=[],
+                assumptions=[],
+            )
+
+    monkeypatch.setattr(plant_routes, "GardenRecommendationService", FakeRecommendationService)
+    app.dependency_overrides[deps.get_current_user] = lambda: SimpleNamespace(id=1)
+    app.dependency_overrides[plant_routes.get_db] = lambda: fake_db
+
+    response = TestClient(app).post(
+        "/api/plants/suggest",
+        json={"garden_id": 1, "goal": "Food", "maintenance_preference": "Moderate", "sunlight": "Full Sun", "selected_plant_ids": []},
+        headers={"Authorization": "Bearer test"},
+    )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json()[0]["plant"]["slug"] == "basil"
+    assert response.json()[0]["score"] == 82
+    assert "Basil pairs well with tomato." in response.json()[0]["reasons"]
+
+
 def _service(
     plants: list[Plant],
     *,
@@ -305,3 +354,19 @@ class FakeRecommendationSession:
 
     def scalar(self, statement):
         return self.run
+
+
+class FakePlantSuggestSession:
+    def __init__(self, plants: list[Plant]) -> None:
+        self.garden = SimpleNamespace(id=1, property=SimpleNamespace(user_id=1))
+        self.context = _context()
+        self.plants = plants
+
+    def get(self, model, id: int):
+        return self.garden
+
+    def scalar(self, statement):
+        return self.context
+
+    def scalars(self, statement):
+        return SimpleNamespace(all=lambda: self.plants)
