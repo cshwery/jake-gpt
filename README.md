@@ -219,6 +219,20 @@ The generate endpoint requires existing garden context. If context has not been 
 
 The legacy `POST /api/plants/suggest` endpoint remains available for the v0 happy path, but it now delegates internally to `GardenRecommendationService` and adapts the rich recommendation result back into the older `PlantSuggestion[]` response shape.
 
+## Layout Engine
+
+`RuleBasedGardenPlanner` delegates physical placement to `LayoutEngine`. The planner still owns the v0 plan orchestration and companion notes, while `LayoutEngine` owns grid creation, placement, quantity estimates, layout warnings, explanations, and assumptions.
+
+`LayoutEngine` v0 intentionally preserves the existing deterministic grid behavior:
+
+- default 4-column grid
+- row count based on selected plant count
+- trees and tall plants prefer the north/top row
+- quantities are estimated from garden area and plant spacing, then capped
+- layout output still converts to the existing `PlanItemRead` and `GeneratedPlan` response shape
+
+The engine accepts an optional `CompanionGraphService` and uses it lightly to keep obvious beneficial companions near each other and separate strong negative pairs when the simple grid can do so. Future work can persist `garden_layouts`, add richer scoring, and optimize against the drawn polygon without changing the public plan response in this v0 refactor.
+
 ## Plant Knowledge Commands
 
 ```bash

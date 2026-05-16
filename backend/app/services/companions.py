@@ -242,22 +242,24 @@ class CompanionGraphService:
         target_plant = self._plants_by_id.get(relationship.target_plant_id)
         if source_plant is None or target_plant is None:
             return None
-        source_cultivar = self._cultivars_by_id.get(relationship.source_cultivar_id) if relationship.source_cultivar_id else None
-        target_cultivar = self._cultivars_by_id.get(relationship.target_cultivar_id) if relationship.target_cultivar_id else None
+        source_cultivar_id = getattr(relationship, "source_cultivar_id", None)
+        target_cultivar_id = getattr(relationship, "target_cultivar_id", None)
+        source_cultivar = self._cultivars_by_id.get(source_cultivar_id) if source_cultivar_id else None
+        target_cultivar = self._cultivars_by_id.get(target_cultivar_id) if target_cultivar_id else None
         return CompanionGraphEdge(
-            source_plant_slug=source_plant.slug or source_plant.common_name.lower().replace(" ", "-"),
-            target_plant_slug=target_plant.slug or target_plant.common_name.lower().replace(" ", "-"),
+            source_plant_slug=getattr(source_plant, "slug", None) or source_plant.common_name.lower().replace(" ", "-"),
+            target_plant_slug=getattr(target_plant, "slug", None) or target_plant.common_name.lower().replace(" ", "-"),
             source_cultivar_slug=source_cultivar.slug if source_cultivar else None,
             target_cultivar_slug=target_cultivar.slug if target_cultivar else None,
             relationship_type=relationship.relationship_type,
-            confidence=relationship.confidence,
-            evidence_type=relationship.evidence_type,
+            confidence=getattr(relationship, "confidence", "medium"),
+            evidence_type=getattr(relationship, "evidence_type", "manual"),
             rationale=relationship.rationale,
             relationship_direction=relationship.relationship_direction,
-            min_distance_inches=relationship.min_distance_inches,
-            max_distance_inches=relationship.max_distance_inches,
-            source_notes=relationship.source_notes,
-            canonical_relationship_id=relationship.id,
+            min_distance_inches=getattr(relationship, "min_distance_inches", None),
+            max_distance_inches=getattr(relationship, "max_distance_inches", None),
+            source_notes=getattr(relationship, "source_notes", None),
+            canonical_relationship_id=getattr(relationship, "id", None),
         )
 
     @staticmethod
