@@ -62,3 +62,13 @@ class GardenContext(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     garden = relationship("Garden", back_populates="context")
+
+
+class GardenRecommendationRun(Base):
+    __tablename__ = "garden_recommendation_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    garden_id: Mapped[int] = mapped_column(ForeignKey("gardens.id"), index=True)
+    input: Mapped[dict] = mapped_column(JSON)
+    result: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
