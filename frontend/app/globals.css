@@ -1,0 +1,23 @@
+@import "mapbox-gl/dist/mapbox-gl.css";
+@import "@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 120 20% 97%;
+  --foreground: 130 18% 12%;
+  --border: 120 12% 82%;
+  --primary: 148 42% 28%;
+  --muted: 105 12% 90%;
+  --accent: 36 82% 58%;
+}
+
+body {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+.mapboxgl-canvas {
+  outline: none;
+}
