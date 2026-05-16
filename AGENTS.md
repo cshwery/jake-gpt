@@ -18,6 +18,7 @@ This project is a monorepo for Jakerton's Garden Planning Tool, branded as JakeG
 - Do not add public registration until explicitly requested.
 - Do not use the deprecated Google Maps Drawing Library.
 - At logical checkpoints, such as completing a viable V0 or a major data pipeline, remind the user to commit and push before continuing.
+- Follow GitHub flow: keep `main` protected, do new work on feature branches, and open pull requests into `main` instead of committing directly to `main`.
 
 ## Local Commands
 

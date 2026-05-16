@@ -138,6 +138,16 @@ cd frontend
 npm test
 ```
 
+## Development Workflow
+
+This repo uses GitHub flow:
+
+- `main` is the stable protected branch.
+- Create feature branches from `main`.
+- Open pull requests back into `main`.
+- Do not commit directly to `main`.
+- At logical checkpoints, such as a viable V0 or a major data pipeline, commit and push before continuing.
+
 ## Notes
 
 Climate, hardiness, frost, precipitation, geocoding, and planning are intentionally behind replaceable service interfaces. Replace mocks with real integrations behind those service boundaries.
