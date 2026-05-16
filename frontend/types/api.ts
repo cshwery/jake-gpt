@@ -55,6 +55,7 @@ export type GardenContextRead = {
 
 export type PlantRead = {
   id: number;
+  slug?: string | null;
   common_name: string;
   scientific_name?: string | null;
   plant_type: string;
@@ -77,6 +78,40 @@ export type PlantSuggestion = {
   plant: PlantRead;
   score: number;
   reasons: string[];
+};
+
+export type GardenRecommendationResult = {
+  garden_id: number;
+  summary: string;
+  selected: string[];
+  recommendations: Array<{
+    plant_slug: string;
+    plant_common_name: string;
+    cultivar_recommendations: Array<{
+      cultivar_slug: string;
+      cultivar_name: string;
+      score: number;
+      reason_codes: string[];
+    }>;
+    recommendation_type: string;
+    score: number;
+    score_breakdown: Record<string, number>;
+    reason_codes: string[];
+    warnings: string[];
+    explanation: string;
+  }>;
+  warnings: Array<{
+    warning_type: string;
+    plant_slugs: string[];
+    severity: string;
+    message: string;
+  }>;
+  excluded: Array<{
+    plant_slug: string;
+    reason_codes: string[];
+    message: string;
+  }>;
+  assumptions: string[];
 };
 
 export type GeneratedPlan = {
@@ -104,6 +139,7 @@ export type GeneratedPlan = {
 export type GardenGoals = {
   goal: string;
   maintenance_preference: string;
+  experience_level?: string;
   sunlight: string;
   free_text_preferences?: string | null;
 };

@@ -1,5 +1,5 @@
 from app.models.base import Base
-from app.models.garden import Garden, GardenContext
+from app.models.garden import Garden, GardenContext, GardenRecommendationRun
 from app.models.plan import GardenPlan, PlanItem
 from app.models.plant import (
     CompanionRelationshipCandidate,
@@ -8,6 +8,7 @@ from app.models.plant import (
     PlantCompanion,
     PlantCompanionRelationship,
     PlantCultivar,
+    PlantFamily,
     PlantRegionRule,
     PlantingRule,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "Base",
     "Garden",
     "GardenContext",
+    "GardenRecommendationRun",
     "GardenPlan",
     "PlanItem",
     "DataSource",
@@ -26,6 +28,7 @@ __all__ = [
     "PlantCompanion",
     "PlantCompanionRelationship",
     "PlantCultivar",
+    "PlantFamily",
     "PlantRegionRule",
     "PlantingRule",
     "Property",

@@ -10,6 +10,7 @@ class Plant(Base):
     __tablename__ = "plants"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    plant_family_id: Mapped[int | None] = mapped_column(ForeignKey("plant_families.id"), nullable=True, index=True)
     slug: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=True)
     common_name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     scientific_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
@@ -56,6 +57,21 @@ class Plant(Base):
 
     companions_from = relationship("PlantCompanion", foreign_keys="PlantCompanion.plant_id", back_populates="plant")
     cultivars = relationship("PlantCultivar", back_populates="plant", cascade="all, delete-orphan")
+    family = relationship("PlantFamily", back_populates="plants")
+
+
+class PlantFamily(Base):
+    __tablename__ = "plant_families"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    slug: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(180))
+    common_name: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    plants = relationship("Plant", back_populates="family")
 
 
 class PlantCompanion(Base):

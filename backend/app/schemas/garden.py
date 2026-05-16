@@ -133,6 +133,8 @@ class GardenContextRead(BaseModel):
 
 
 def context_to_dto(context: Any) -> GardenContextDTO:
+    if isinstance(context, GardenContextDTO):
+        return context
     return GardenContextDTO(
         garden_id=context.garden_id,
         geometry=GeometryContextDTO(
