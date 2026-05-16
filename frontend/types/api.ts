@@ -16,13 +16,41 @@ export type GardenRead = {
 };
 
 export type GardenContextRead = {
-  id: number;
   garden_id: number;
-  hardiness_zone: string;
-  last_frost_date: string;
-  precipitation_category: string;
-  sunlight_estimate: string;
-  notes?: string | null;
+  geometry: {
+    centroid: { lat: number; lon: number };
+    bbox: { min_lat: number; min_lon: number; max_lat: number; max_lon: number };
+    area_sq_m: number;
+    area_sq_ft: number;
+  };
+  hardiness: {
+    zone?: string | null;
+    source?: string | null;
+    confidence?: string | null;
+  };
+  frost: {
+    estimated_last_frost_date?: string | null;
+    estimated_first_frost_date?: string | null;
+    growing_season_days?: number | null;
+    source?: string | null;
+    confidence?: string | null;
+  };
+  precipitation: {
+    expected_annual_precipitation_mm?: number | null;
+    expected_growing_season_precipitation_mm?: number | null;
+    category?: string | null;
+    source?: string | null;
+    confidence?: string | null;
+  };
+  sunlight: {
+    category?: string | null;
+    method?: string | null;
+    confidence?: string | null;
+    user_override?: string | null;
+  };
+  assumptions: string[];
+  warnings: string[];
+  raw_context: Record<string, unknown>;
 };
 
 export type PlantRead = {

@@ -76,13 +76,42 @@ export default function Home() {
     if (!garden) return;
     setError(null);
     try {
-      const created = await api.request<GardenContextRead>(`/gardens/${garden.id}/context`, {
+      const created = await api.request<GardenContextRead>(`/gardens/${garden.id}/context/generate`, {
         method: "POST",
-        body: JSON.stringify({ sunlight_estimate: goals.sunlight })
+        body: JSON.stringify({ user_sunlight_override: sunlightToApi(goals.sunlight) })
       });
       setContext(created);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Context save failed");
+    }
+  }
+
+  async function recalculateContext() {
+    if (!garden) return;
+    setError(null);
+    try {
+      const updated = await api.request<GardenContextRead>(`/gardens/${garden.id}/context/recalculate`, {
+        method: "POST",
+        body: JSON.stringify({ user_sunlight_override: sunlightToApi(goals.sunlight) })
+      });
+      setContext(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Context recalculation failed");
+    }
+  }
+
+  async function updateSunlight(value: string) {
+    if (!garden) return;
+    setGoals({ ...goals, sunlight: apiToGoalSunlight(value) });
+    setError(null);
+    try {
+      const updated = await api.request<GardenContextRead>(`/gardens/${garden.id}/context/sunlight`, {
+        method: "PATCH",
+        body: JSON.stringify({ user_sunlight_override: value })
+      });
+      setContext(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sunlight update failed");
     }
   }
 
@@ -161,7 +190,7 @@ export default function Home() {
             </Card>
           </div>
         ) : null}
-        {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onContinue={continueToPlants} /> : null}
+        {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
           <PlantSelection plants={plants} suggestions={suggestions} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generatePlan={generatePlan} />
         ) : null}
@@ -221,6 +250,8 @@ function ContextForm({
   goals,
   setGoals,
   onSave,
+  onRecalculate,
+  onSunlightChange,
   onContinue
 }: {
   garden: GardenRead;
@@ -228,28 +259,43 @@ function ContextForm({
   goals: GardenGoals;
   setGoals: (goals: GardenGoals) => void;
   onSave: () => void;
+  onRecalculate: () => void;
+  onSunlightChange: (value: string) => void;
   onContinue: () => void;
 }) {
+  const sunlightValue = context?.sunlight.user_override ?? context?.sunlight.category ?? sunlightToApi(goals.sunlight);
   return (
-    <Card className="mx-auto max-w-2xl">
+    <Card className="mx-auto max-w-3xl">
       <h1 className="mb-4 text-2xl font-semibold">Garden Context</h1>
       <div className="mb-4 grid gap-3 text-sm sm:grid-cols-2">
-        <ContextMetric label="Garden Area" value={`${garden.area_sq_ft.toFixed(0)} sq ft`} detail={`${garden.area_sq_m.toFixed(1)} sq m`} />
+        <ContextMetric label="Garden Area" value={`${(context?.geometry.area_sq_ft ?? garden.area_sq_ft).toFixed(0)} sq ft`} detail={`${(context?.geometry.area_sq_m ?? garden.area_sq_m).toFixed(1)} sq m`} />
         {context ? (
           <>
-            <ContextMetric label="Planting Zone" value={context.hardiness_zone} detail="simulated hardiness zone" />
-            <ContextMetric label="Annual Precipitation" value={precipitationLabel(context.precipitation_category)} detail="simulated estimate" />
-            <ContextMetric label="Median Last Frost" value={formatDate(context.last_frost_date)} detail="simulated median date" />
+            <ContextMetric label="Planting Zone" value={context.hardiness.zone ?? "Unknown"} detail={`${context.hardiness.source ?? "unknown"} · ${context.hardiness.confidence ?? "unknown"} confidence`} />
+            <ContextMetric label="Last Frost" value={context.frost.estimated_last_frost_date ? formatDate(context.frost.estimated_last_frost_date) : "Unknown"} detail={`${context.frost.source ?? "unknown"} · estimated`} />
+            <ContextMetric label="First Frost" value={context.frost.estimated_first_frost_date ? formatDate(context.frost.estimated_first_frost_date) : "Unknown"} detail={`${context.frost.growing_season_days ?? "Unknown"} growing-season days`} />
+            <ContextMetric label="Annual Precipitation" value={precipitationLabel(context.precipitation.category)} detail={`${formatMm(context.precipitation.expected_annual_precipitation_mm)} annual · ${formatMm(context.precipitation.expected_growing_season_precipitation_mm)} growing season`} />
+            <ContextMetric label="Sunlight" value={sunlightLabel(context.sunlight.category)} detail={`${context.sunlight.method ?? "unknown"} · ${context.sunlight.confidence ?? "unknown"} confidence`} />
           </>
         ) : null}
-        <label>Sunlight
-          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={goals.sunlight} onChange={(event) => setGoals({ ...goals, sunlight: event.target.value })}>
-            {["Full Sun", "Part Sun", "Part Shade", "Shade"].map((value) => <option key={value}>{value}</option>)}
+        <label className="sm:col-span-2">How sunny is this garden area during the growing season?
+          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={sunlightValue} onChange={(event) => context ? onSunlightChange(event.target.value) : setGoals({ ...goals, sunlight: apiToGoalSunlight(event.target.value) })}>
+            <option value="full_sun">Full sun: 6+ hours</option>
+            <option value="part_sun">Part sun: 4-6 hours</option>
+            <option value="part_shade">Part shade: 2-4 hours</option>
+            <option value="shade">Shade: less than 2 hours</option>
+            <option value="unknown">I am not sure</option>
           </select>
         </label>
       </div>
+      {context?.assumptions.length ? (
+        <ContextList title="Assumptions" items={context.assumptions} />
+      ) : null}
+      {context?.warnings.length ? (
+        <ContextList title="Warnings" items={context.warnings} tone="warning" />
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={onSave}>{context ? "Recalculate Context" : "Calculate Context"}</Button>
+        <Button onClick={context ? onRecalculate : onSave}>{context ? "Recalculate Context" : "Calculate Context"}</Button>
         {context ? <Button className="bg-accent text-foreground" onClick={onContinue}>Continue to Plants</Button> : null}
       </div>
     </Card>
@@ -266,13 +312,61 @@ function ContextMetric({ label, value, detail }: { label: string; value: string;
   );
 }
 
-function precipitationLabel(category: string) {
+function precipitationLabel(category?: string | null) {
+  if (!category) return "Unknown";
   const labels: Record<string, string> = {
-    "moderate-low": "Moderate-low, about 20-30 in/yr",
-    moderate: "Moderate, about 30-38 in/yr",
-    variable: "Variable, about 15-45 in/yr"
+    low: "Low",
+    medium: "Medium",
+    high: "High"
   };
   return labels[category] ?? category;
+}
+
+function formatMm(value?: number | null) {
+  return typeof value === "number" ? `${value.toFixed(0)} mm` : "unknown";
+}
+
+function sunlightToApi(value: string) {
+  const values: Record<string, string> = {
+    "Full Sun": "full_sun",
+    "Part Sun": "part_sun",
+    "Part Shade": "part_shade",
+    Shade: "shade"
+  };
+  return values[value] ?? "unknown";
+}
+
+function apiToGoalSunlight(value: string) {
+  const values: Record<string, string> = {
+    full_sun: "Full Sun",
+    part_sun: "Part Sun",
+    part_shade: "Part Shade",
+    shade: "Shade",
+    unknown: "Part Sun"
+  };
+  return values[value] ?? "Part Sun";
+}
+
+function sunlightLabel(value?: string | null) {
+  const values: Record<string, string> = {
+    full_sun: "Full sun",
+    part_sun: "Part sun",
+    part_shade: "Part shade",
+    shade: "Shade",
+    unknown: "Unknown"
+  };
+  return values[value ?? "unknown"] ?? "Unknown";
+}
+
+function ContextList({ title, items, tone = "default" }: { title: string; items: string[]; tone?: "default" | "warning" }) {
+  return (
+    <div className={`mb-4 rounded-md border p-3 text-sm ${tone === "warning" ? "border-amber-200 bg-amber-50 text-amber-900" : "border-border bg-muted/40"}`}>
+      <div className="mb-2 font-semibold">{title}</div>
+      <ul className="list-inside list-disc space-y-1">
+        {items.map((item) => <li key={item}>{item}</li>)}
+      </ul>
+    </div>
+  );
 }
 
 function formatDate(value: string) {
