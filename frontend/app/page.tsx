@@ -7,7 +7,7 @@ import { GardenMap } from "@/components/GardenMap";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { GardenContextRead, GardenGoals, GardenRead, GeneratedPlan, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
+import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
 
 type Step = "login" | "address" | "map" | "context" | "plants" | "plan";
 
@@ -19,6 +19,7 @@ export default function Home() {
   const [context, setContext] = useState<GardenContextRead | null>(null);
   const [plants, setPlants] = useState<PlantRead[]>([]);
   const [suggestions, setSuggestions] = useState<PlantSuggestion[]>([]);
+  const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [goals, setGoals] = useState<GardenGoals>({ goal: "Food", maintenance_preference: "Moderate", sunlight: "Full Sun", free_text_preferences: "" });
   const [plan, setPlan] = useState<GeneratedPlan | null>(null);
@@ -128,11 +129,24 @@ export default function Home() {
 
   async function loadSuggestions() {
     if (!garden) return;
-    const result = await api.request<PlantSuggestion[]>("/plants/suggest", {
+    const selectedSlugs = plants.filter((plant) => selectedIds.includes(plant.id)).map((plant) => plant.slug).filter(Boolean) as string[];
+    const result = await api.request<GardenRecommendationResult>(`/gardens/${garden.id}/recommendations/generate`, {
       method: "POST",
-      body: JSON.stringify({ garden_id: garden.id, ...goals, selected_plant_ids: selectedIds })
+      body: JSON.stringify({
+        goals: recommendationGoals(goals),
+        primary_goal: goalToApi(goals.goal),
+        maintenance_preference: goals.maintenance_preference.toLowerCase(),
+        experience_level: goals.experience_level ?? "beginner",
+        selected_plant_slugs: selectedSlugs,
+        selected_cultivar_slugs: [],
+        excluded_plant_slugs: [],
+        limit: 25,
+        include_excluded: false,
+        notes: goals.free_text_preferences ?? null
+      })
     });
-    setSuggestions(result);
+    setRecommendations(result);
+    setSuggestions([]);
   }
 
   async function generatePlan() {
@@ -192,7 +206,7 @@ export default function Home() {
         ) : null}
         {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
-          <PlantSelection plants={plants} suggestions={suggestions} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generatePlan={generatePlan} />
+          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generatePlan={generatePlan} />
         ) : null}
         {step === "plan" && property && garden && plan ? (
           <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
@@ -376,6 +390,7 @@ function formatDate(value: string) {
 function PlantSelection(props: {
   plants: PlantRead[];
   suggestions: PlantSuggestion[];
+  recommendations: GardenRecommendationResult | null;
   selectedIds: number[];
   setSelectedIds: (ids: number[]) => void;
   goals: GardenGoals;
@@ -390,22 +405,69 @@ function PlantSelection(props: {
         <h2 className="mb-3 text-lg font-semibold">Goals</h2>
         <label className="mb-3 block text-sm">Garden goal
           <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.goal} onChange={(event) => props.setGoals({ ...props.goals, goal: event.target.value })}>
-            {["Food", "Flowers", "Shade", "Combination"].map((value) => <option key={value}>{value}</option>)}
+            {["Food", "Flowers", "Shade", "Pollinators", "Herbs", "Fruit", "Native plants", "Combination"].map((value) => <option key={value}>{value}</option>)}
           </select>
         </label>
         <label className="mb-3 block text-sm">Maintenance
           <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.maintenance_preference} onChange={(event) => props.setGoals({ ...props.goals, maintenance_preference: event.target.value })}>
-            {["Low", "Moderate", "Intensive"].map((value) => <option key={value}>{value}</option>)}
+            {["Low", "Moderate", "High"].map((value) => <option key={value}>{value}</option>)}
+          </select>
+        </label>
+        <label className="mb-3 block text-sm">Experience
+          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.experience_level ?? "beginner"} onChange={(event) => props.setGoals({ ...props.goals, experience_level: event.target.value })}>
+            <option value="beginner">Beginner</option>
+            <option value="intermediate">Intermediate</option>
+            <option value="advanced">Advanced</option>
           </select>
         </label>
         <label className="mb-3 block text-sm">Preferences
           <textarea className="mt-1 min-h-24 w-full rounded-md border border-border p-3" value={props.goals.free_text_preferences ?? ""} onChange={(event) => props.setGoals({ ...props.goals, free_text_preferences: event.target.value })} />
         </label>
-        <Button className="mb-2 w-full" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Suggest Plants</Button>
+        <Button className="mb-2 w-full" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Generate Recommendations</Button>
         <Button className="w-full" disabled={props.selectedIds.length === 0} onClick={props.generatePlan}>Generate Plan</Button>
       </Card>
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Plants</h2>
+        {props.recommendations ? (
+          <div className="mb-4 space-y-3">
+            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">{props.recommendations.summary}</div>
+            {props.recommendations.warnings.length ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {props.recommendations.warnings.map((warning) => <div key={`${warning.warning_type}-${warning.plant_slugs.join("-")}`}>{warning.message}</div>)}
+              </div>
+            ) : null}
+            <div className="grid gap-3 lg:grid-cols-2">
+              {props.recommendations.recommendations.slice(0, 8).map((item) => {
+                const plant = props.plants.find((candidate) => candidate.slug === item.plant_slug);
+                return (
+                  <div key={item.plant_slug} className="rounded-md border border-border bg-white p-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{item.plant_common_name}</div>
+                        <div className="text-xs text-foreground/60">{item.recommendation_type.replaceAll("_", " ")} · score {item.score.toFixed(1)}</div>
+                      </div>
+                      {plant ? (
+                        <Button className="h-8 px-3 text-xs" onClick={() => props.setSelectedIds(props.selectedIds.includes(plant.id) ? props.selectedIds : [...props.selectedIds, plant.id])}>Add</Button>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 text-foreground/70">{item.explanation}</p>
+                    {item.cultivar_recommendations.length ? (
+                      <div className="mt-2 text-xs text-foreground/60">Cultivars: {item.cultivar_recommendations.map((cultivar) => cultivar.cultivar_name).join(", ")}</div>
+                    ) : null}
+                    {item.warnings.length ? (
+                      <div className="mt-2 text-xs text-amber-700">{item.warnings.join(" ")}</div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+            {props.recommendations.assumptions.length ? (
+              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-foreground/70">
+                {props.recommendations.assumptions.join(" ")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {props.suggestions.length ? (
           <div className="mb-4 rounded-md bg-muted p-3 text-sm">
             Suggested: {props.suggestions.map((item) => item.plant.common_name).join(", ")}
@@ -426,4 +488,23 @@ function PlantSelection(props: {
 
 function StepIndicator({ step }: { step: Step }) {
   return <div className="hidden text-sm text-foreground/60 sm:block">{step}</div>;
+}
+
+function goalToApi(goal: string) {
+  const values: Record<string, string> = {
+    Food: "food",
+    Flowers: "flowers",
+    Shade: "shade",
+    Pollinators: "pollinators",
+    Herbs: "herbs",
+    Fruit: "fruit",
+    "Native plants": "native_plants",
+    Combination: "combination"
+  };
+  return values[goal] ?? "combination";
+}
+
+function recommendationGoals(goals: GardenGoals) {
+  const primary = goalToApi(goals.goal);
+  return primary === "combination" ? ["food", "flowers", "pollinators", "combination"] : [primary];
 }

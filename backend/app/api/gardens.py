@@ -2,14 +2,15 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2 import WKTElement
-from sqlalchemy import text
+from sqlalchemy import desc, select, text
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.models import Garden, Property, User
+from app.models import Garden, GardenRecommendationRun, Property, User
 from app.schemas.garden import ContextUpsert, GardenContextDTO, GardenContextGenerate, GardenCreate, GardenRead, GardenSunlightUpdate, context_to_dto
 from app.services.garden_context import GardenContextService, GardenGeometryService, SunlightCategory
+from app.services.garden_recommendations import GardenRecommendationRequest, GardenRecommendationResult, GardenRecommendationService, GardenGoalInput
 
 router = APIRouter(prefix="/gardens", tags=["gardens"])
 
@@ -110,6 +111,59 @@ def update_sunlight_context(
     _authorize_garden(garden_id, db, user)
     context = GardenContextService(db).update_sunlight(garden_id, payload.user_sunlight_override)
     return context_to_dto(context)
+
+
+@router.post("/{garden_id}/recommendations/generate", response_model=GardenRecommendationResult)
+def generate_recommendations(
+    garden_id: int,
+    payload: GardenRecommendationRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> GardenRecommendationResult:
+    _authorize_garden(garden_id, db, user)
+    try:
+        context = GardenContextService(db).get_context(garden_id)
+    except LookupError:
+        raise HTTPException(status_code=400, detail="Garden context has not been generated yet. Generate garden context before recommendations.")
+    goal_input = GardenGoalInput(
+        goals=payload.goals,
+        primary_goal=payload.primary_goal,
+        maintenance_preference=payload.maintenance_preference,
+        experience_level=payload.experience_level,
+        desired_plant_slugs=payload.selected_plant_slugs,
+        desired_cultivar_slugs=payload.selected_cultivar_slugs,
+        excluded_plant_slugs=payload.excluded_plant_slugs,
+        notes=payload.notes,
+    )
+    result = GardenRecommendationService(db=db).recommend_for_garden(
+        context_to_dto(context),
+        goal_input,
+        selected_plant_slugs=payload.selected_plant_slugs,
+        selected_cultivar_slugs=payload.selected_cultivar_slugs,
+        limit=payload.limit,
+        include_excluded=payload.include_excluded,
+    )
+    run = GardenRecommendationRun(
+        garden_id=garden_id,
+        input=payload.model_dump(mode="json"),
+        result=result.model_dump(mode="json"),
+    )
+    db.add(run)
+    db.commit()
+    return result
+
+
+@router.get("/{garden_id}/recommendations/latest", response_model=GardenRecommendationResult)
+def latest_recommendations(garden_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)) -> GardenRecommendationResult:
+    _authorize_garden(garden_id, db, user)
+    run = db.scalar(
+        select(GardenRecommendationRun)
+        .where(GardenRecommendationRun.garden_id == garden_id)
+        .order_by(desc(GardenRecommendationRun.created_at), desc(GardenRecommendationRun.id))
+    )
+    if run is None:
+        raise HTTPException(status_code=404, detail="No recommendation run exists for this garden.")
+    return GardenRecommendationResult.model_validate(run.result)
 
 
 def _polygon_wkt(geometry: dict) -> str:

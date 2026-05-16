@@ -175,6 +175,48 @@ PATCH /api/gardens/{garden_id}/context/sunlight
 
 All v0 climate values are estimates or mock-backed. The UI labels provider source/confidence and displays assumptions and warnings instead of presenting false precision.
 
+## Graph-Aware Recommendations
+
+`GardenRecommendationService` generates deterministic, explainable plant and cultivar recommendations from `GardenContextDTO`, user goals, selected plants, plant/cultivar data, plant families, and the canonical companion graph.
+
+The recommender combines these score categories:
+
+- hardiness fit
+- sunlight fit
+- precipitation/water fit
+- user goal fit
+- maintenance preference
+- garden size and spacing feasibility
+- companion graph score
+- plant-family disease/pest clustering risk
+- cultivar fit
+- beginner friendliness
+- diversity for combination gardens
+
+Each recommendation returns a `score_breakdown`, reason codes, warnings, cultivar suggestions, and a plain-language explanation. Scores are advisory; low-confidence companion claims have small impact, and strong negative companion relationships can override weak positive relationships.
+
+Plant families are stored in `plant_families`, with `plants.plant_family_id` linking species to common crop families such as Solanaceae, Cucurbitaceae, Brassicaceae, Fabaceae, Apiaceae, Amaryllidaceae, Asteraceae, Lamiaceae, Rosaceae, Poaceae, and Amaranthaceae. Same-family plants are not automatically excluded, but they receive a light risk penalty and warnings for crop-rotation and disease-pressure planning. Known graph risks, such as tomato/potato disease pressure, remain stronger than generic family warnings.
+
+Cultivar scoring uses cultivar-specific fields when present:
+
+- days to maturity against the context growing season
+- hardiness and spacing overrides
+- disease resistance
+- heat/cold/drought tolerance
+- compact or container-friendly habit
+- common uses and user goals
+
+When cultivar fields are missing, the recommender falls back to species defaults and marks the recommendation with `FALLBACK_TO_SPECIES_DEFAULTS`.
+
+Recommendation endpoints:
+
+```bash
+POST /api/gardens/{garden_id}/recommendations/generate
+GET /api/gardens/{garden_id}/recommendations/latest
+```
+
+The generate endpoint requires existing garden context. If context has not been generated, it returns a helpful error instead of guessing. Recommendation runs are persisted in `garden_recommendation_runs` for later retrieval.
+
 ## Plant Knowledge Commands
 
 ```bash
