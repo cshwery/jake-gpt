@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, gardens, plants, plans, properties
+from app.api import auth, gardens, layouts, plants, plans, properties
 from app.core import get_settings
 
 settings = get_settings()
@@ -18,6 +18,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api")
 app.include_router(properties.router, prefix="/api")
 app.include_router(gardens.router, prefix="/api")
+app.include_router(layouts.router, prefix="/api")
 app.include_router(plants.router, prefix="/api")
 app.include_router(plans.router, prefix="/api")
 

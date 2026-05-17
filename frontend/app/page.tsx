@@ -7,9 +7,9 @@ import { GardenMap } from "@/components/GardenMap";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
+import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, LayoutResult, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
 
-type Step = "login" | "address" | "map" | "context" | "plants" | "plan";
+type Step = "login" | "address" | "map" | "context" | "plants" | "layout" | "plan";
 
 export default function Home() {
   const [step, setStep] = useState<Step>("login");
@@ -22,6 +22,7 @@ export default function Home() {
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [goals, setGoals] = useState<GardenGoals>({ goal: "Food", maintenance_preference: "Moderate", sunlight: "Full Sun", free_text_preferences: "" });
+  const [layout, setLayout] = useState<LayoutResult | null>(null);
   const [plan, setPlan] = useState<GeneratedPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const api = useMemo(() => new ApiClient(token), [token]);
@@ -164,6 +165,28 @@ export default function Home() {
     }
   }
 
+  async function generateLayout() {
+    if (!garden) return;
+    setError(null);
+    try {
+      const selectedSlugs = plants.filter((plant) => selectedIds.includes(plant.id)).map((plant) => plant.slug).filter(Boolean) as string[];
+      const generated = await api.request<LayoutResult>(`/gardens/${garden.id}/layouts/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          selected_plant_slugs: selectedSlugs,
+          selected_cultivar_slugs: [],
+          accepted_recommendation_slugs: [],
+          accepted_cultivar_slugs: [],
+          options: { cell_size_ft: 2, include_paths: true, layout_style: "grid", max_candidates: 10, persist: true }
+        })
+      });
+      setLayout(generated);
+      setStep("layout");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Layout generation failed");
+    }
+  }
+
   async function savePlan() {
     if (!plan) return;
     const saved = await api.request<GeneratedPlan>("/plans", {
@@ -206,7 +229,10 @@ export default function Home() {
         ) : null}
         {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
-          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generatePlan={generatePlan} />
+          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generateLayout={generateLayout} />
+        ) : null}
+        {step === "layout" && layout ? (
+          <LayoutScreen layout={layout} onRegenerate={generateLayout} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
         {step === "plan" && property && garden && plan ? (
           <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
@@ -396,7 +422,7 @@ function PlantSelection(props: {
   goals: GardenGoals;
   setGoals: (goals: GardenGoals) => void;
   loadSuggestions: () => void;
-  generatePlan: () => void;
+  generateLayout: () => void;
 }) {
   const toggle = (id: number) => props.setSelectedIds(props.selectedIds.includes(id) ? props.selectedIds.filter((item) => item !== id) : [...props.selectedIds, id]);
   return (
@@ -424,7 +450,7 @@ function PlantSelection(props: {
           <textarea className="mt-1 min-h-24 w-full rounded-md border border-border p-3" value={props.goals.free_text_preferences ?? ""} onChange={(event) => props.setGoals({ ...props.goals, free_text_preferences: event.target.value })} />
         </label>
         <Button className="mb-2 w-full" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Generate Recommendations</Button>
-        <Button className="w-full" disabled={props.selectedIds.length === 0} onClick={props.generatePlan}>Generate Plan</Button>
+        <Button className="w-full" disabled={props.selectedIds.length === 0} onClick={props.generateLayout}>Generate Layout</Button>
       </Card>
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Plants</h2>
@@ -482,6 +508,70 @@ function PlantSelection(props: {
           ))}
         </div>
       </Card>
+    </div>
+  );
+}
+
+function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
+  const cellsById = new Map(layout.grid.cells.map((cell) => [cell.cell_id, cell]));
+  return (
+    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+      <div className="rounded-md border border-border bg-white p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <h2 className="text-lg font-semibold">Layout</h2>
+          <div className="text-sm text-foreground/60">Score {(layout.score_breakdown.total_score ?? 0).toFixed(1)}</div>
+        </div>
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${layout.grid.cols}, minmax(0, 1fr))` }}>
+          {layout.grid.cells.map((cell) => (
+            <div key={cell.cell_id} className={`flex min-h-16 flex-col justify-between rounded-sm border p-2 text-xs ${cell.is_path ? "border-stone-300 bg-stone-100 text-stone-600" : cell.plant_slug ? "border-primary/40 bg-primary/10" : "border-border bg-muted/30"}`}>
+              <span className="font-semibold">{cell.cell_id}</span>
+              <span>{cell.is_path ? "Path" : cell.label ?? ""}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <Card>
+        <h2 className="mb-3 text-lg font-semibold">Layout Details</h2>
+        <p className="text-sm text-foreground/70">{layout.summary}</p>
+        <div className="mt-4 space-y-2 text-sm">
+          {layout.placements.map((placement) => (
+            <div key={`${placement.plant_slug}-${placement.grid_cells.join("-")}`}>
+              {placement.plant_common_name}: {placement.quantity} in {placement.grid_cells.filter((cellId) => cellsById.has(cellId)).join(", ")}
+            </div>
+          ))}
+        </div>
+        <ScoreList scores={layout.score_breakdown} />
+        {layout.warnings.length ? <MessageList title="Warnings" items={layout.warnings} className="border-amber-200 bg-amber-50 text-amber-900" /> : null}
+        <MessageList title="Explanations" items={layout.explanations} />
+        <MessageList title="Assumptions" items={layout.assumptions} />
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button onClick={onContinue}>Continue to Plan</Button>
+          <Button className="bg-accent text-foreground" onClick={onRegenerate}>Regenerate Layout</Button>
+          <Button className="bg-muted text-foreground" onClick={onBack}>Back to Recommendations</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function ScoreList({ scores }: { scores: Record<string, number> }) {
+  return (
+    <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
+      {Object.entries(scores).filter(([key]) => key !== "total_score").map(([key, value]) => (
+        <div key={key} className="rounded-md border border-border bg-muted/30 px-2 py-1">
+          {key.replaceAll("_", " ")}: {value.toFixed(1)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MessageList({ title, items, className = "border-border bg-muted/40 text-foreground/70" }: { title: string; items: string[]; className?: string }) {
+  if (!items.length) return null;
+  return (
+    <div className={`mt-4 rounded-md border p-3 text-xs ${className}`}>
+      <div className="mb-1 font-semibold text-foreground">{title}</div>
+      {items.map((item) => <div key={item}>{item}</div>)}
     </div>
   );
 }

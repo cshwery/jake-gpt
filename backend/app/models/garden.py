@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from geoalchemy2 import Geography
-from sqlalchemy import Date, DateTime, Float, ForeignKey, JSON, Integer, String
+from sqlalchemy import Date, DateTime, Float, ForeignKey, JSON, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -23,6 +23,7 @@ class Garden(Base):
     property = relationship("Property", back_populates="gardens")
     context = relationship("GardenContext", back_populates="garden", uselist=False)
     plans = relationship("GardenPlan", back_populates="garden")
+    layouts = relationship("GardenLayout", back_populates="garden", cascade="all, delete-orphan")
 
 
 class GardenContext(Base):
@@ -72,3 +73,57 @@ class GardenRecommendationRun(Base):
     input: Mapped[dict] = mapped_column(JSON)
     result: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    layouts = relationship("GardenLayout", back_populates="recommendation_run")
+
+
+class GardenLayout(Base):
+    __tablename__ = "garden_layouts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    garden_id: Mapped[int] = mapped_column(ForeignKey("gardens.id"), index=True)
+    garden_plan_id: Mapped[int | None] = mapped_column(ForeignKey("garden_plans.id"), nullable=True, index=True)
+    recommendation_run_id: Mapped[int | None] = mapped_column(ForeignKey("garden_recommendation_runs.id"), nullable=True, index=True)
+    layout_version: Mapped[str] = mapped_column(String(40), default="v1")
+    input: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    score_total: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score_breakdown: Mapped[dict] = mapped_column(JSON, default=dict)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    explanations: Mapped[list[str]] = mapped_column(JSON, default=list)
+    assumptions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    garden = relationship("Garden", back_populates="layouts")
+    garden_plan = relationship("GardenPlan", back_populates="layouts")
+    recommendation_run = relationship("GardenRecommendationRun", back_populates="layouts")
+    placements = relationship("LayoutPlacement", back_populates="garden_layout", cascade="all, delete-orphan")
+
+
+class LayoutPlacement(Base):
+    __tablename__ = "layout_placements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    garden_layout_id: Mapped[int] = mapped_column(ForeignKey("garden_layouts.id"), index=True)
+    plant_id: Mapped[int] = mapped_column(ForeignKey("plants.id"), index=True)
+    cultivar_id: Mapped[int | None] = mapped_column(ForeignKey("plant_cultivars.id"), nullable=True, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    grid_cells: Mapped[list[str]] = mapped_column(JSON, default=list)
+    row: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    col: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    width: Mapped[int] = mapped_column(Integer, default=1)
+    height: Mapped[int] = mapped_column(Integer, default=1)
+    x_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    y_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spacing_inches: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    row_spacing_inches: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    placement_role: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    warnings: Mapped[list[str]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    garden_layout = relationship("GardenLayout", back_populates="placements")
+    plant = relationship("Plant")
+    cultivar = relationship("PlantCultivar")

@@ -18,6 +18,7 @@ class GardenPlan(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     garden = relationship("Garden", back_populates="plans")
+    layouts = relationship("GardenLayout", back_populates="garden_plan")
     items = relationship("PlanItem", back_populates="plan", cascade="all, delete-orphan")
 
 
