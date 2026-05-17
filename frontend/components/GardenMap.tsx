@@ -8,6 +8,7 @@ import mapboxgl from "mapbox-gl";
 import { Check, MousePointer2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { GardenRead, GeneratedPlan, PropertyRead } from "@/types/api";
+import { areaCategory, areaWarning } from "@/lib/product";
 
 type Props = {
   property: PropertyRead;
@@ -30,6 +31,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
   const [drawMode, setDrawMode] = useState<DrawMode>("select");
   const [draftPoints, setDraftPoints] = useState<ScreenPoint[]>([]);
   const [isLassoing, setIsLassoing] = useState(false);
+  const areaSqFt = localPolygon ? area({ type: "Feature", properties: {}, geometry: localPolygon }) * 10.7639 : garden?.area_sq_ft ?? null;
 
   useEffect(() => {
     if (!token || !container.current || mapRef.current) return;
@@ -38,7 +40,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
       container: container.current,
       style: "mapbox://styles/mapbox/satellite-streets-v12",
       center: [property.longitude, property.latitude],
-      zoom: 19
+      zoom: 20
     });
     mapRef.current = map;
     const draw = new MapboxDraw({
@@ -103,7 +105,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
   }
 
   function screenToGeo(point: ScreenPoint): [number, number] {
-    return [property.longitude + (point.x - 50) * 0.000008, property.latitude - (point.y - 50) * 0.000006];
+    return [property.longitude + (point.x - 50) * 0.0000032, property.latitude - (point.y - 50) * 0.0000024];
   }
 
   function completeMockPolygon(points: ScreenPoint[]) {
@@ -199,6 +201,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
         <div className="absolute left-4 top-4 rounded bg-white/90 px-3 py-2 text-sm shadow">
           Mock satellite view: {property.normalized_address}
         </div>
+        <MapScaleReadout areaSqFt={areaSqFt} />
         <PolygonOverlay polygon={localPolygon} draftPoints={draftPoints} />
         {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={localPolygon} /> : null}
         {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setDrawMode} clearDrawing={clearDrawing} finishPolygon={() => completeMockPolygon(draftPoints)} canFinish={draftPoints.length >= 3} /> : null}
@@ -220,8 +223,23 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
         </div>
       ) : null}
       {dimmed ? <div className="pointer-events-none absolute inset-0 rounded-lg bg-white/45" /> : null}
+      <MapScaleReadout areaSqFt={areaSqFt} />
       {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={garden?.polygon_geojson ?? localPolygon} /> : null}
       {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setMapboxMode} clearDrawing={clearDrawing} finishPolygon={() => undefined} canFinish={false} /> : null}
+    </div>
+  );
+}
+
+function MapScaleReadout({ areaSqFt }: { areaSqFt: number | null }) {
+  const warning = areaSqFt ? areaWarning(areaSqFt) : null;
+  return (
+    <div className="absolute right-4 top-4 max-w-xs rounded-md bg-white/95 p-3 text-xs shadow">
+      <div className="font-semibold">Draw the planting area</div>
+      <div className="mt-1 text-foreground/70">Zoom in until you can clearly see the part of your yard where the garden will go.</div>
+      <div className="text-foreground/70">Draw only the actual planting area, not the whole property.</div>
+      <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1">Tip: most backyard beds are 25-500 sq ft.</div>
+      {areaSqFt ? <div className="mt-2 font-medium">{areaSqFt.toFixed(0)} sq ft · {areaCategory(areaSqFt)}</div> : null}
+      {warning ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">{warning}</div> : null}
     </div>
   );
 }

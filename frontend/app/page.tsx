@@ -1,13 +1,15 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { Leaf, MapPin, Save, Sprout } from "lucide-react";
+import { FormEvent, ReactNode, useMemo, useState } from "react";
+import { Check, Leaf, MapPin, Save, Sprout, X } from "lucide-react";
 import { ApiClient } from "@/lib/api";
 import { GardenMap } from "@/components/GardenMap";
+import { GardenLayoutGrid } from "@/components/GardenLayoutGrid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, LayoutResult, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
+import { areaCategory, areaWarning, conciseReasons, layoutQualityLabel, layoutToGeneratedPlan, plantDisplayName, recommendationFitLabel, recommendationTypeLabel, titleCase } from "@/lib/product";
 
 type Step = "login" | "address" | "map" | "context" | "plants" | "layout" | "plan";
 
@@ -21,6 +23,7 @@ export default function Home() {
   const [suggestions, setSuggestions] = useState<PlantSuggestion[]>([]);
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedCultivarSlugs, setSelectedCultivarSlugs] = useState<string[]>([]);
   const [goals, setGoals] = useState<GardenGoals>({ goal: "Food", maintenance_preference: "Moderate", sunlight: "Full Sun", free_text_preferences: "" });
   const [layout, setLayout] = useState<LayoutResult | null>(null);
   const [plan, setPlan] = useState<GeneratedPlan | null>(null);
@@ -139,7 +142,7 @@ export default function Home() {
         maintenance_preference: goals.maintenance_preference.toLowerCase(),
         experience_level: goals.experience_level ?? "beginner",
         selected_plant_slugs: selectedSlugs,
-        selected_cultivar_slugs: [],
+        selected_cultivar_slugs: selectedCultivarSlugs,
         excluded_plant_slugs: [],
         limit: 25,
         include_excluded: false,
@@ -153,6 +156,11 @@ export default function Home() {
   async function generatePlan() {
     if (!garden) return;
     setError(null);
+    if (layout) {
+      setPlan(layoutToGeneratedPlan(layout, goals));
+      setStep("plan");
+      return;
+    }
     try {
       const generated = await api.request<GeneratedPlan>("/plans/generate", {
         method: "POST",
@@ -174,7 +182,7 @@ export default function Home() {
         method: "POST",
         body: JSON.stringify({
           selected_plant_slugs: selectedSlugs,
-          selected_cultivar_slugs: [],
+          selected_cultivar_slugs: selectedCultivarSlugs,
           accepted_recommendation_slugs: [],
           accepted_cultivar_slugs: [],
           options: { cell_size_ft: 2, include_paths: true, layout_style: "grid", max_candidates: 10, persist: true }
@@ -216,11 +224,16 @@ export default function Home() {
             <GardenMap property={property} garden={garden} onPolygon={(polygon) => saveGarden(polygon)} />
             <Card>
               <h2 className="mb-2 text-lg font-semibold">Garden Area</h2>
-              <p className="mb-4 text-sm text-foreground/70">Draw one polygon around the usable garden area. JakeGPT stores GeoJSON and the backend calculates authoritative PostGIS area.</p>
+              <p className="mb-2 text-sm text-foreground/70">Draw one polygon around the usable garden area. JakeGPT stores GeoJSON and the backend calculates authoritative PostGIS area.</p>
+              <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-xs text-foreground/70">
+                Zoom in until the bed or yard section fills the map. Draw only the planting area, not the whole property.
+              </div>
               {garden ? (
                 <div className="space-y-2 text-sm">
-                  <div>{garden.area_sq_ft.toFixed(0)} sq ft</div>
+                  <div className="text-lg font-semibold">{garden.area_sq_ft.toFixed(0)} sq ft</div>
+                  <div>{areaCategory(garden.area_sq_ft)} home garden</div>
                   <div>{garden.area_sq_m.toFixed(1)} sq m</div>
+                  {areaWarning(garden.area_sq_ft) ? <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-amber-900">{areaWarning(garden.area_sq_ft)}</div> : null}
                   <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue</Button>
                 </div>
               ) : null}
@@ -229,17 +242,18 @@ export default function Home() {
         ) : null}
         {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
-          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generateLayout={generateLayout} />
+          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} selectedCultivarSlugs={selectedCultivarSlugs} setSelectedCultivarSlugs={setSelectedCultivarSlugs} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generateLayout={generateLayout} reloadPlants={async (query) => setPlants(await api.request<PlantRead[]>(query ? `/plants?q=${encodeURIComponent(query)}` : "/plants"))} />
         ) : null}
         {step === "layout" && layout ? (
-          <LayoutScreen layout={layout} onRegenerate={generateLayout} onContinue={generatePlan} onBack={() => setStep("plants")} />
+          <LayoutScreen layout={layout} areaSqFt={garden?.area_sq_ft ?? null} onRegenerate={generateLayout} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
-        {step === "plan" && property && garden && plan ? (
+        {step === "plan" && garden && plan ? (
           <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-            <GardenMap property={property} garden={garden} generatedPlan={plan} dimmed />
+            <GardenLayoutGrid layout={layout} plan={plan} areaSqFt={garden.area_sq_ft} />
             <Card>
               <h2 className="mb-3 text-lg font-semibold">Generated Plan</h2>
               <p className="text-sm text-foreground/70">{plan.summary}</p>
+              <div className="mt-2 text-xs text-foreground/60">Plan uses the same north-up grid and placements from the Layout tab.</div>
               <div className="mt-4 space-y-2 text-sm">
                 {plan.items.map((item) => <div key={`${item.plant_id}-${item.row}-${item.col}`}>{item.label}: {item.quantity} plantings</div>)}
               </div>
@@ -390,9 +404,13 @@ function apiToGoalSunlight(value: string) {
 function sunlightLabel(value?: string | null) {
   const values: Record<string, string> = {
     full_sun: "Full sun",
+    "Full Sun": "Full sun",
     part_sun: "Part sun",
+    "Part Sun": "Part sun",
     part_shade: "Part shade",
+    "Part Shade": "Part shade",
     shade: "Shade",
+    Shade: "Shade",
     unknown: "Unknown"
   };
   return values[value ?? "unknown"] ?? "Unknown";
@@ -419,12 +437,29 @@ function PlantSelection(props: {
   recommendations: GardenRecommendationResult | null;
   selectedIds: number[];
   setSelectedIds: (ids: number[]) => void;
+  selectedCultivarSlugs: string[];
+  setSelectedCultivarSlugs: (slugs: string[]) => void;
   goals: GardenGoals;
   setGoals: (goals: GardenGoals) => void;
   loadSuggestions: () => void;
   generateLayout: () => void;
+  reloadPlants: (query: string) => Promise<void>;
 }) {
-  const toggle = (id: number) => props.setSelectedIds(props.selectedIds.includes(id) ? props.selectedIds.filter((item) => item !== id) : [...props.selectedIds, id]);
+  const [query, setQuery] = useState("");
+  const species = dedupePlants(props.plants.filter((plant) => (plant.result_type ?? "species") === "species"));
+  const cultivars = props.plants.filter((plant) => plant.result_type === "cultivar" && plant.cultivar_slug);
+  const selectedSpecies = species.filter((plant) => props.selectedIds.includes(plant.id));
+  const selectedCultivars = cultivars.filter((plant) => plant.cultivar_slug && props.selectedCultivarSlugs.includes(plant.cultivar_slug));
+  const selectedCount = selectedSpecies.length + selectedCultivars.length;
+  const toggleSpecies = (id: number) => props.setSelectedIds(props.selectedIds.includes(id) ? props.selectedIds.filter((item) => item !== id) : [...props.selectedIds, id]);
+  const toggleCultivar = (plant: PlantRead) => {
+    if (!plant.cultivar_slug) return;
+    const nextCultivars = props.selectedCultivarSlugs.includes(plant.cultivar_slug)
+      ? props.selectedCultivarSlugs.filter((slug) => slug !== plant.cultivar_slug)
+      : [...props.selectedCultivarSlugs, plant.cultivar_slug];
+    props.setSelectedCultivarSlugs(nextCultivars);
+    if (!props.selectedIds.includes(plant.id)) props.setSelectedIds([...props.selectedIds, plant.id]);
+  };
   return (
     <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
       <Card>
@@ -450,10 +485,25 @@ function PlantSelection(props: {
           <textarea className="mt-1 min-h-24 w-full rounded-md border border-border p-3" value={props.goals.free_text_preferences ?? ""} onChange={(event) => props.setGoals({ ...props.goals, free_text_preferences: event.target.value })} />
         </label>
         <Button className="mb-2 w-full" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Generate Recommendations</Button>
-        <Button className="w-full" disabled={props.selectedIds.length === 0} onClick={props.generateLayout}>Generate Layout</Button>
+        <Button className="w-full" disabled={selectedCount === 0} onClick={props.generateLayout}>Generate Layout</Button>
+        <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <div className="font-semibold">Selected plants: {selectedCount}</div>
+          <div className="mt-2 space-y-1">
+            {[...selectedSpecies, ...selectedCultivars].map((plant) => (
+              <button key={`${plant.result_type ?? "species"}-${plant.cultivar_slug ?? plant.id}`} className="flex w-full items-center justify-between rounded bg-white px-2 py-1 text-left" onClick={() => plant.result_type === "cultivar" ? toggleCultivar(plant) : toggleSpecies(plant.id)}>
+                <span>{plantDisplayName(plant)}</span>
+                <X className="h-3 w-3" />
+              </button>
+            ))}
+          </div>
+        </div>
       </Card>
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Plants</h2>
+        <form className="mb-4 flex gap-2" onSubmit={(event) => { event.preventDefault(); props.reloadPlants(query); }}>
+          <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search species or cultivars" />
+          <Button>Search</Button>
+        </form>
         {props.recommendations ? (
           <div className="mb-4 space-y-3">
             <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">{props.recommendations.summary}</div>
@@ -469,16 +519,20 @@ function PlantSelection(props: {
                   <div key={item.plant_slug} className="rounded-md border border-border bg-white p-3 text-sm">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="font-semibold">{item.plant_common_name}</div>
-                        <div className="text-xs text-foreground/60">{item.recommendation_type.replaceAll("_", " ")} · score {item.score.toFixed(1)}</div>
+                        <div className="font-semibold">{titleCase(item.plant_common_name)}</div>
+                        <div className="text-xs text-foreground/60">{recommendationTypeLabel(item.recommendation_type, item.reason_codes)} · {recommendationFitLabel(item.score)}</div>
                       </div>
                       {plant ? (
-                        <Button className="h-8 px-3 text-xs" onClick={() => props.setSelectedIds(props.selectedIds.includes(plant.id) ? props.selectedIds : [...props.selectedIds, plant.id])}>Add</Button>
+                        <Button className={props.selectedIds.includes(plant.id) ? "h-8 bg-accent px-3 text-xs text-foreground" : "h-8 px-3 text-xs"} onClick={() => toggleSpecies(plant.id)}>
+                          {props.selectedIds.includes(plant.id) ? <><Check className="mr-1 h-3 w-3" />Added</> : "Add"}
+                        </Button>
                       ) : null}
                     </div>
-                    <p className="mt-2 text-foreground/70">{item.explanation}</p>
+                    <div className="mt-2 space-y-1 text-foreground/70">
+                      {conciseReasons(item.explanation, item.reason_codes, item.warnings).map((reason) => <div key={reason}>{reason}</div>)}
+                    </div>
                     {item.cultivar_recommendations.length ? (
-                      <div className="mt-2 text-xs text-foreground/60">Cultivars: {item.cultivar_recommendations.map((cultivar) => cultivar.cultivar_name).join(", ")}</div>
+                      <div className="mt-2 text-xs text-foreground/60">Cultivars: {item.cultivar_recommendations.map((cultivar) => `${titleCase(item.plant_common_name)} — ${cultivar.cultivar_name}`).join(", ")}</div>
                     ) : null}
                     {item.warnings.length ? (
                       <div className="mt-2 text-xs text-amber-700">{item.warnings.join(" ")}</div>
@@ -499,39 +553,48 @@ function PlantSelection(props: {
             Suggested: {props.suggestions.map((item) => item.plant.common_name).join(", ")}
           </div>
         ) : null}
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {props.plants.map((plant) => (
-            <button key={plant.id} onClick={() => toggle(plant.id)} className={`rounded-md border p-3 text-left text-sm ${props.selectedIds.includes(plant.id) ? "border-primary bg-primary/10" : "border-border bg-white"}`}>
-              <div className="font-semibold"><Leaf className="mr-1 inline h-4 w-4" />{plant.common_name}</div>
-              <div className="text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
+        <PlantResultGroup title="Species">
+          {species.map((plant) => (
+            <button key={plant.id} onClick={() => toggleSpecies(plant.id)} className={`rounded-md border p-3 text-left text-sm ${props.selectedIds.includes(plant.id) ? "border-primary bg-primary/10" : "border-border bg-white"}`}>
+              <div className="font-semibold"><Leaf className="mr-1 inline h-4 w-4" />{plantDisplayName(plant)}</div>
+              <div className="text-foreground/60">{sunlightLabel(plant.sunlight_requirement)} · zone {plant.min_zone}-{plant.max_zone}</div>
+              <div className="mt-2 text-xs font-medium">{props.selectedIds.includes(plant.id) ? "Added ✓" : "Species"}</div>
             </button>
           ))}
-        </div>
+        </PlantResultGroup>
+        {cultivars.length ? (
+          <PlantResultGroup title="Cultivars">
+            {cultivars.map((plant) => (
+              <button key={plant.cultivar_slug} onClick={() => toggleCultivar(plant)} className={`rounded-md border p-3 text-left text-sm ${plant.cultivar_slug && props.selectedCultivarSlugs.includes(plant.cultivar_slug) ? "border-primary bg-primary/10" : "border-border bg-white"}`}>
+                <div className="font-semibold"><Leaf className="mr-1 inline h-4 w-4" />{plantDisplayName(plant)}</div>
+                <div className="text-foreground/60">{sunlightLabel(plant.sunlight_requirement)} · zone {plant.min_zone}-{plant.max_zone}</div>
+                <div className="mt-2 text-xs font-medium">{plant.cultivar_slug && props.selectedCultivarSlugs.includes(plant.cultivar_slug) ? "Added ✓" : "Cultivar"}</div>
+              </button>
+            ))}
+          </PlantResultGroup>
+        ) : null}
       </Card>
     </div>
   );
 }
 
-function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
+function PlantResultGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="mb-5">
+      <h3 className="mb-2 text-sm font-semibold text-foreground/70">{title}</h3>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{children}</div>
+    </div>
+  );
+}
+
+function LayoutScreen({ layout, areaSqFt, onRegenerate, onContinue, onBack }: { layout: LayoutResult; areaSqFt: number | null; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
   const cellsById = new Map(layout.grid.cells.map((cell) => [cell.cell_id, cell]));
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <div className="rounded-md border border-border bg-white p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Layout</h2>
-          <div className="text-sm text-foreground/60">Score {(layout.score_breakdown.total_score ?? 0).toFixed(1)}</div>
-        </div>
-        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${layout.grid.cols}, minmax(0, 1fr))` }}>
-          {layout.grid.cells.map((cell) => (
-            <div key={cell.cell_id} className={`flex min-h-16 flex-col justify-between rounded-sm border p-2 text-xs ${cell.is_path ? "border-stone-300 bg-stone-100 text-stone-600" : cell.plant_slug ? "border-primary/40 bg-primary/10" : "border-border bg-muted/30"}`}>
-              <span className="font-semibold">{cell.cell_id}</span>
-              <span>{cell.is_path ? "Path" : cell.label ?? ""}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <GardenLayoutGrid layout={layout} areaSqFt={areaSqFt} />
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Layout Details</h2>
+        <div className="mb-2 inline-flex rounded-md border border-border bg-muted/40 px-2 py-1 text-xs font-medium">{layoutQualityLabel(layout.score_breakdown.total_score ?? 0)}</div>
         <p className="text-sm text-foreground/70">{layout.summary}</p>
         <div className="mt-4 space-y-2 text-sm">
           {layout.placements.map((placement) => (
@@ -540,7 +603,6 @@ function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: La
             </div>
           ))}
         </div>
-        <ScoreList scores={layout.score_breakdown} />
         {layout.warnings.length ? <MessageList title="Warnings" items={layout.warnings} className="border-amber-200 bg-amber-50 text-amber-900" /> : null}
         <MessageList title="Explanations" items={layout.explanations} />
         <MessageList title="Assumptions" items={layout.assumptions} />
@@ -550,18 +612,6 @@ function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: La
           <Button className="bg-muted text-foreground" onClick={onBack}>Back to Recommendations</Button>
         </div>
       </Card>
-    </div>
-  );
-}
-
-function ScoreList({ scores }: { scores: Record<string, number> }) {
-  return (
-    <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
-      {Object.entries(scores).filter(([key]) => key !== "total_score").map(([key, value]) => (
-        <div key={key} className="rounded-md border border-border bg-muted/30 px-2 py-1">
-          {key.replaceAll("_", " ")}: {value.toFixed(1)}
-        </div>
-      ))}
     </div>
   );
 }
@@ -597,4 +647,14 @@ function goalToApi(goal: string) {
 function recommendationGoals(goals: GardenGoals) {
   const primary = goalToApi(goals.goal);
   return primary === "combination" ? ["food", "flowers", "pollinators", "combination"] : [primary];
+}
+
+function dedupePlants(plants: PlantRead[]) {
+  const seen = new Set<string>();
+  return plants.filter((plant) => {
+    const key = plant.slug ?? String(plant.id);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

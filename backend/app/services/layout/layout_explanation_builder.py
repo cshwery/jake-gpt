@@ -23,6 +23,7 @@ class LayoutExplanationBuilder:
         if grid and any(cell.is_path for cell in grid.cells):
             explanations.append("A path was added so the center of the garden remains reachable.")
         if placements and companion_graph:
+            explanations.extend([placement.location_notes for placement in placements if placement.location_notes and "placed near" in placement.location_notes])
             explanations.extend(self._relationship_explanations(placements, companion_graph))
         return _unique(explanations)
 

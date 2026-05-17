@@ -41,16 +41,23 @@ class PlacementPlanner:
             if cell is None:
                 warnings.append(f"No open grid cell remained for {plant.common_name.title()}; quantity was reduced to zero.")
                 continue
-            occupied.add(cell.cell_id)
             spacing, row_spacing = spacing_for(plant, cultivar)
             quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+            visual_cells = self._select_visual_cells(plant, cell, available, occupied, quantity, grid, companion_graph, placements)
+            for visual_cell in visual_cells:
+                occupied.add(visual_cell.cell_id)
             role = _placement_role(plant, companion_graph)
-            cell.plant_slug = _plant_slug(plant)
-            cell.cultivar_slug = cultivar.slug if cultivar else None
-            cell.label = plant.common_name.title()
+            for visual_cell in visual_cells:
+                visual_cell.plant_slug = _plant_slug(plant)
+                visual_cell.cultivar_slug = cultivar.slug if cultivar else None
+                visual_cell.label = plant.common_name.title()
+                visual_cell.notes = [_role_note(role)]
             notes = f"{spacing} in spacing; {plant.planting_notes}"
             if cultivar:
                 notes = f"{cultivar.cultivar_name}: {notes}"
+            companion_note = self._placement_relationship_note(plant, placements, companion_graph)
+            if companion_note:
+                notes = f"{notes} {companion_note}"
             warnings.extend(quantity_warnings)
             placement = LayoutPlacementDTO(
                 plant_id=plant.id,
@@ -60,7 +67,7 @@ class PlacementPlanner:
                 cultivar_slug=cultivar.slug if cultivar else None,
                 cultivar_name=cultivar.cultivar_name if cultivar else None,
                 quantity=quantity,
-                grid_cells=[cell.cell_id],
+                grid_cells=[visual_cell.cell_id for visual_cell in visual_cells],
                 row=cell.row,
                 col=cell.col,
                 x_pct=(cell.col + 0.5) / grid.cols * 100,
@@ -104,6 +111,56 @@ class PlacementPlanner:
         if _is_pollinator(plant):
             return sorted(available, key=lambda cell: (0 if _is_edge(cell, grid) else 1, cell.row, cell.col))
         return sorted(available, key=lambda cell: (cell.row, cell.col))
+
+    def _select_visual_cells(
+        self,
+        plant: Plant,
+        anchor,
+        available: list,
+        occupied: set[str],
+        quantity: int,
+        grid: GardenGrid,
+        companion_graph: CompanionGraphService | None,
+        placements: list[LayoutPlacementDTO],
+    ) -> list:
+        target_count = min(max(1, (quantity + 3) // 4), 4, len([cell for cell in available if cell.cell_id not in occupied]) + 1)
+        candidates = [cell for cell in available if cell.cell_id not in occupied or cell.cell_id == anchor.cell_id]
+        if _is_pollinator(plant):
+            candidates = sorted(candidates, key=lambda cell: (0 if _is_edge(cell, grid) else 1, abs(cell.row - anchor.row) + abs(cell.col - anchor.col), cell.row, cell.col))
+        else:
+            candidates = sorted(candidates, key=lambda cell: (abs(cell.row - anchor.row) + abs(cell.col - anchor.col), cell.row, cell.col))
+        selected = [anchor]
+        for candidate in candidates:
+            if candidate.cell_id == anchor.cell_id:
+                continue
+            if len(selected) >= target_count:
+                break
+            if companion_graph and self._would_create_strong_negative_adjacency(plant, candidate, placements, companion_graph):
+                continue
+            selected.append(candidate)
+        return selected
+
+    def _would_create_strong_negative_adjacency(self, plant: Plant, cell, placements: list[LayoutPlacementDTO], companion_graph: CompanionGraphService) -> bool:
+        plant_slug = _plant_slug(plant)
+        for placement in placements:
+            relationship = companion_graph.get_relationship(plant_slug, placement.plant_slug) or companion_graph.get_relationship(placement.plant_slug, plant_slug)
+            if relationship is None or relationship.relationship_type not in STRONG_NEGATIVE_TYPES:
+                continue
+            if abs((placement.row or 0) - cell.row) + abs((placement.col or 0) - cell.col) <= 1:
+                return True
+        return False
+
+    def _placement_relationship_note(self, plant: Plant, placements: list[LayoutPlacementDTO], companion_graph: CompanionGraphService | None) -> str | None:
+        if companion_graph is None:
+            return None
+        plant_slug = _plant_slug(plant)
+        for placement in placements:
+            relationship = companion_graph.get_relationship(plant_slug, placement.plant_slug) or companion_graph.get_relationship(placement.plant_slug, plant_slug)
+            if relationship and relationship.relationship_type in POSITIVE_TYPES:
+                return f"{plant.common_name.title()} is placed near {placement.plant_common_name.title()} as a {relationship.relationship_type.replace('_', ' ')} companion."
+        if _is_pollinator(plant):
+            return f"{plant.common_name.title()} is placed near the border for pollinator support."
+        return None
 
     def _select_cell(
         self,
@@ -220,6 +277,17 @@ def _placement_role(plant: Plant, companion_graph: CompanionGraphService | None 
     if (getattr(plant, "plant_type", "") or "").lower() in {"herb", "flower"}:
         return "companion"
     return "crop"
+
+
+def _role_note(role: str | None) -> str:
+    return {
+        "pollinator": "pollinator border",
+        "companion": "companion planting",
+        "tree": "tall north-side planting",
+        "support": "tall north-side planting",
+        "shrub": "shrub spacing warning",
+        "crop": "crop",
+    }.get(role or "crop", "crop")
 
 
 def _plant_slug(plant: Plant) -> str:

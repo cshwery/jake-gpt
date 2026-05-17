@@ -72,6 +72,13 @@ export type PlantRead = {
   days_to_maturity?: number | null;
   maintenance_level: string;
   planting_notes: string;
+  result_type?: "species" | "cultivar";
+  plant_id?: number | null;
+  cultivar_id?: number | null;
+  cultivar_slug?: string | null;
+  cultivar_name?: string | null;
+  display_name?: string | null;
+  cultivar_notes?: string | null;
 };
 
 export type PlantSuggestion = {
@@ -118,7 +125,7 @@ export type GeneratedPlan = {
   id?: number | null;
   garden_id: number;
   summary: string;
-  layout_grid: { rows: number; cols: number; access_paths?: string[] };
+  layout_grid: { rows: number; cols: number; cell_size_ft?: number; orientation?: string; cells?: LayoutResult["grid"]["cells"]; access_paths?: string[] };
   items: Array<{
     id?: number | null;
     plant_id: number;
@@ -163,10 +170,18 @@ export type LayoutResult = {
   placements: Array<{
     plant_slug: string;
     plant_common_name: string;
+    plant_id?: number | null;
     cultivar_slug?: string | null;
     cultivar_name?: string | null;
+    cultivar_id?: number | null;
     quantity: number;
     grid_cells: string[];
+    row?: number | null;
+    col?: number | null;
+    width?: number;
+    height?: number;
+    x_pct?: number | null;
+    y_pct?: number | null;
     spacing_inches?: number | null;
     row_spacing_inches?: number | null;
     placement_role?: string | null;

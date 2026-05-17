@@ -131,7 +131,33 @@ def test_layout_engine_v1_scores_and_explains_candidates() -> None:
     assert result.score_breakdown.companion_score > 0
     assert result.paths
     assert any("rectangular grid" in assumption for assumption in result.assumptions)
-    assert any("companion graph" in explanation for explanation in result.explanations)
+    assert any("placed near" in explanation or "companion graph" in explanation for explanation in result.explanations)
+
+
+def test_layout_result_includes_orientation_and_cell_size() -> None:
+    result = LayoutEngine().generate_layout(_garden(area=120), [_plant(1, "tomato")], garden_context=SimpleNamespace(area_sq_ft=120), options=LayoutOptions(cell_size_ft=4))
+
+    assert result.grid.orientation == "north_up"
+    assert result.grid.cell_size_ft == 4
+
+
+def test_pollinator_flowers_prefer_border_cells() -> None:
+    result = LayoutEngine().generate_layout(_garden(area=240), [_plant(1, "tomato"), _plant(2, "marigold", flower=True)], garden_context=SimpleNamespace(area_sq_ft=240), options=LayoutOptions(cell_size_ft=4))
+
+    marigold = next(placement for placement in result.placements if placement.plant_slug == "marigold")
+    assert any(cell_id.startswith("A") or cell_id.endswith("1") for cell_id in marigold.grid_cells)
+
+
+def test_companion_visual_cells_are_adjacent_for_tomato_and_basil() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "basil")]
+    graph = CompanionGraphService(relationships=[_relationship(1, 2, "beneficial")], plants=plants)
+
+    result = LayoutEngine().generate_layout(_garden(area=240), plants, garden_context=SimpleNamespace(area_sq_ft=240), companion_graph=graph, options=LayoutOptions(cell_size_ft=4))
+    tomato_cells = _cells_for(result, "tomato")
+    basil_cells = _cells_for(result, "basil")
+
+    assert any(abs(tomato.row - basil.row) + abs(tomato.col - basil.col) <= 1 for tomato in tomato_cells for basil in basil_cells)
+    assert any("placed near" in (placement.location_notes or "") for placement in result.placements)
 
 
 def test_layout_engine_persists_layout_and_placements() -> None:
@@ -267,3 +293,7 @@ class FakeLayoutSession:
             layout.id = layout.id or idx
         for idx, placement in enumerate(self.placements, start=1):
             placement.id = placement.id or idx
+
+
+def _cells_for(result: LayoutResult, plant_slug: str):
+    return [cell for cell in result.grid.cells if cell.plant_slug == plant_slug]

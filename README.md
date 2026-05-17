@@ -261,6 +261,19 @@ Score breakdowns are transparent:
 
 The companion score uses `CompanionGraphService`; negative relationships are not hidden by weak positive relationships. Strong negative relationships near each other reduce `conflict_score` and produce warnings or explanations.
 
+## Usability Conventions
+
+JakeGPT should present advisory model output in product language, not internal scoring language:
+
+- Recommendation scores are kept internally, but the UI shows fit labels: `Excellent Fit`, `Good Fit`, `Possible Fit`, `Poor Fit`, or `Not Recommended`.
+- Internal recommendation types such as `warning_only` are mapped to user-facing labels such as `Use With Caution`, `Good Companion`, `Pollinator Support`, or `Not Recommended Nearby`.
+- Layout scores are kept internally, but the UI shows layout quality labels: `Excellent Layout`, `Good Layout`, `Acceptable Layout`, `Needs Review`, or `Poor Layout`.
+- Layout sub-scores render as `Good`, `Acceptable`, or `Needs Review`.
+- Garden areas are categorized as `Tiny`, `Small`, `Medium`, `Large`, `Very Large`, or `Probably Accidental`.
+- The top of every layout grid represents north. The UI displays `North ↑`, cell size, grid dimensions, garden area, and a legend.
+- Layout and Plan screens share the same canonical layout data. The Plan screen summarizes the selected layout rather than regenerating or reinterpreting a different geometry.
+- Species and cultivars are displayed distinctly, for example `Tomato` versus `Tomato — Sungold`.
+
 Current limitations:
 
 - irregular polygons are approximated as rectangles
