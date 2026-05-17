@@ -136,6 +136,50 @@ export type GeneratedPlan = {
   goals: GardenGoals;
 };
 
+export type LayoutResult = {
+  layout_id?: number | null;
+  garden_id?: number | null;
+  garden_plan_id?: number | null;
+  recommendation_run_id?: number | null;
+  summary: string;
+  grid: {
+    rows: number;
+    cols: number;
+    cell_size_ft: number;
+    orientation: string;
+    cells: Array<{
+      cell_id: string;
+      row: number;
+      col: number;
+      available: boolean;
+      is_path: boolean;
+      plant_slug?: string | null;
+      cultivar_slug?: string | null;
+      label?: string | null;
+      notes: string[];
+    }>;
+    access_paths: string[];
+  };
+  placements: Array<{
+    plant_slug: string;
+    plant_common_name: string;
+    cultivar_slug?: string | null;
+    cultivar_name?: string | null;
+    quantity: number;
+    grid_cells: string[];
+    spacing_inches?: number | null;
+    row_spacing_inches?: number | null;
+    placement_role?: string | null;
+    location_notes?: string | null;
+    warnings: string[];
+  }>;
+  paths: Array<{ path_id: string; grid_cells: string[]; width_ft: number; notes?: string | null }>;
+  score_breakdown: Record<string, number>;
+  warnings: string[];
+  explanations: string[];
+  assumptions: string[];
+};
+
 export type GardenGoals = {
   goal: string;
   maintenance_preference: string;

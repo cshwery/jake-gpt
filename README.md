@@ -221,17 +221,62 @@ The legacy `POST /api/plants/suggest` endpoint remains available for the v0 happ
 
 ## Layout Engine
 
-`RuleBasedGardenPlanner` delegates physical placement to `LayoutEngine`. The planner still owns the v0 plan orchestration and companion notes, while `LayoutEngine` owns grid creation, placement, quantity estimates, layout warnings, explanations, and assumptions.
+`RuleBasedGardenPlanner` still preserves the v0 happy path and `POST /api/plans/generate` response shape, but physical placement now lives in `LayoutEngine`. The planner owns plan orchestration and companion notes; `LayoutEngine` owns grid creation, candidate layouts, plant placement, score breakdowns, warnings, explanations, assumptions, and optional persistence.
 
-`LayoutEngine` v0 intentionally preserves the existing deterministic grid behavior:
+LayoutEngine v1 adds persisted layout records:
 
-- default 4-column grid
-- row count based on selected plant count
-- trees and tall plants prefer the north/top row
-- quantities are estimated from garden area and plant spacing, then capped
-- layout output still converts to the existing `PlanItemRead` and `GeneratedPlan` response shape
+- `garden_layouts`: stores layout inputs, full result JSON, score totals, score breakdowns, warnings, explanations, assumptions, and optional links to recommendation runs or garden plans.
+- `layout_placements`: stores each plant/cultivar placement, quantity, grid cells, row/column, percentage location, spacing, role, notes, and warnings.
 
-The engine accepts an optional `CompanionGraphService` and uses it lightly to keep obvious beneficial companions near each other and separate strong negative pairs when the simple grid can do so. Future work can persist `garden_layouts`, add richer scoring, and optimize against the drawn polygon without changing the public plan response in this v0 refactor.
+New layout endpoints:
+
+- `POST /api/gardens/{garden_id}/layouts/generate`
+- `GET /api/gardens/{garden_id}/layouts/latest`
+- `GET /api/layouts/{layout_id}`
+
+The layout generate endpoint requires existing garden context. If context is missing, it returns: `Generate garden context before creating a layout.`
+
+Current v1 layout behavior is deterministic and heuristic-based:
+
+- approximates the drawn polygon as a rectangular north-up grid
+- labels cells `A1`, `A2`, `B1`, etc.
+- adds access paths for medium and large gardens
+- uses cultivar spacing overrides, then species spacing, then category defaults
+- keeps tall plants toward the north/top edge where possible
+- places pollinator and border flowers near edges where possible
+- places positive companions and guilds near each other when simple
+- separates avoid, allelopathy, disease-risk, pest-risk, and competition relationships as far as the v1 grid allows
+- caps quantities to keep the layout readable
+
+Score breakdowns are transparent:
+
+- `spacing_score`
+- `companion_score`
+- `conflict_score`
+- `access_score`
+- `sunlight_score`
+- `size_fit_score`
+- `diversity_score`
+- `total_score`
+
+The companion score uses `CompanionGraphService`; negative relationships are not hidden by weak positive relationships. Strong negative relationships near each other reduce `conflict_score` and produce warnings or explanations.
+
+Current limitations:
+
+- irregular polygons are approximated as rectangles
+- sunlight is treated as uniform across the garden
+- layout search is a small deterministic candidate set, not an optimizer
+- persisted layouts are renderable, but manual drag/drop editing is not implemented yet
+- satellite overlay alignment still uses the existing simple grid projection
+
+Future work:
+
+- true polygon clipping
+- manual drag/drop layout editing
+- per-cell sunlight zones
+- improved satellite overlay rendering
+- optimization-based layout search
+- persisted garden layout revisions and placement history
 
 ## Plant Knowledge Commands
 

@@ -1,8 +1,13 @@
-from app.models import Garden, Plant
+from typing import Any
+
+from sqlalchemy.orm import Session
+
+from app.models import Garden, GardenContext, GardenLayout, LayoutPlacement, Plant, PlantCultivar
 from app.services.companions import CompanionGraphService
+from app.services.garden_recommendations import GardenRecommendationResult
 from app.services.layout.grid_builder import GridBuilder
 from app.services.layout.layout_explanation_builder import LayoutExplanationBuilder
-from app.services.layout.layout_schemas import LayoutResult
+from app.services.layout.layout_schemas import LayoutCandidate, LayoutOptions, LayoutResult, LayoutScoreBreakdown
 from app.services.layout.layout_scorer import LayoutScorer
 from app.services.layout.placement_planner import PlacementPlanner
 
@@ -24,16 +29,178 @@ class LayoutEngine:
         self,
         garden: Garden,
         plants: list[Plant],
+        garden_context: GardenContext | Any | None = None,
+        cultivars: list[PlantCultivar] | None = None,
         companion_graph: CompanionGraphService | None = None,
+        recommendation_result: GardenRecommendationResult | None = None,
+        options: LayoutOptions | None = None,
     ) -> LayoutResult:
-        ordered, warnings = self.placement_planner.order_plants(plants, companion_graph)
-        layout_grid = self.grid_builder.build_grid(len(ordered))
-        items = self.placement_planner.build_items(garden, ordered, layout_grid["rows"], layout_grid["cols"])
-        return LayoutResult(
-            layout_grid=layout_grid,
-            items=items,
-            score_breakdown=self.layout_scorer.score(ordered, warnings),
-            warnings=warnings,
-            explanations=self.explanation_builder.explanations(),
-            assumptions=self.explanation_builder.assumptions(),
+        candidates = self.generate_candidate_layouts(
+            garden=garden,
+            garden_context=garden_context,
+            plants=plants,
+            cultivars=cultivars,
+            companion_graph=companion_graph,
+            recommendation_result=recommendation_result,
+            options=options,
         )
+        return self.select_best_layout(candidates, garden_id=garden.id)
+
+    def generate_candidate_layouts(
+        self,
+        garden: Garden,
+        plants: list[Plant],
+        garden_context: GardenContext | Any | None = None,
+        cultivars: list[PlantCultivar] | None = None,
+        companion_graph: CompanionGraphService | None = None,
+        recommendation_result: GardenRecommendationResult | None = None,
+        options: LayoutOptions | None = None,
+    ) -> list[LayoutCandidate]:
+        legacy_grid = garden_context is None and options is None
+        options = options or LayoutOptions()
+        strategies = ["baseline", "companion_clustered", "conflict_separated", "border_pollinator", "path_aware"][: max(1, options.max_candidates)]
+        candidates: list[LayoutCandidate] = []
+        for strategy in strategies:
+            ordered, ordering_warnings = self.placement_planner.order_plants(plants, companion_graph, strategy=strategy)
+            grid = self.grid_builder.build_grid(
+                len(ordered),
+                garden=None if legacy_grid else garden,
+                garden_context=garden_context,
+                options=options,
+            )
+            placements, placement_warnings = self.placement_planner.plan_placements(garden, ordered, grid, cultivars=cultivars, companion_graph=companion_graph)
+            paths = self.grid_builder.paths_for_grid(grid)
+            warnings = [*ordering_warnings, *placement_warnings, *self._sunlight_warnings(ordered, garden_context)]
+            score = self.score_layout(
+                LayoutCandidate(name=strategy, grid=grid, placements=placements, paths=paths, warnings=warnings),
+                plants=ordered,
+                companion_graph=companion_graph,
+                garden_context=garden_context,
+            )
+            explanations = self.explanation_builder.explanations(grid, placements, companion_graph)
+            assumptions = self.explanation_builder.assumptions()
+            candidates.append(
+                LayoutCandidate(
+                    name=strategy,
+                    grid=grid,
+                    placements=placements,
+                    paths=paths,
+                    warnings=warnings,
+                    explanations=explanations,
+                    assumptions=assumptions,
+                    score_breakdown=score,
+                )
+            )
+        return candidates
+
+    def score_layout(
+        self,
+        candidate: LayoutCandidate,
+        plants: list[Plant] | None = None,
+        companion_graph: CompanionGraphService | None = None,
+        garden_context: GardenContext | Any | None = None,
+    ) -> LayoutScoreBreakdown:
+        return self.layout_scorer.score(
+            plants or [],
+            candidate.warnings,
+            grid=candidate.grid,
+            placements=candidate.placements,
+            companion_graph=companion_graph,
+            garden_context=garden_context,
+        )
+
+    def select_best_layout(self, candidates: list[LayoutCandidate], garden_id: int | None = None) -> LayoutResult:
+        if not candidates:
+            raise ValueError("At least one layout candidate is required.")
+        best = sorted(candidates, key=lambda candidate: (-candidate.score_breakdown.total_score, candidate.name))[0]
+        return LayoutResult(
+            garden_id=garden_id,
+            summary=f"LayoutEngine v1 selected the {best.name.replace('_', ' ')} candidate with score {best.score_breakdown.total_score:.1f}.",
+            grid=best.grid,
+            placements=best.placements,
+            paths=best.paths,
+            score_breakdown=best.score_breakdown,
+            warnings=best.warnings,
+            explanations=best.explanations,
+            assumptions=best.assumptions,
+        )
+
+    def persist_layout(
+        self,
+        layout_result: LayoutResult,
+        db: Session,
+        *,
+        garden: Garden | None = None,
+        garden_plan_id: int | None = None,
+        recommendation_run_id: int | None = None,
+        input_payload: dict | None = None,
+    ) -> GardenLayout:
+        garden_id = garden.id if garden is not None else layout_result.garden_id
+        if garden_id is None:
+            raise ValueError("Cannot persist a layout without a garden_id.")
+        persisted = GardenLayout(
+            garden_id=garden_id,
+            garden_plan_id=garden_plan_id or layout_result.garden_plan_id,
+            recommendation_run_id=recommendation_run_id or layout_result.recommendation_run_id,
+            layout_version="v1",
+            input=input_payload or {},
+            result=layout_result.model_dump(mode="json"),
+            score_total=layout_result.score_breakdown.total_score,
+            score_breakdown=layout_result.score_breakdown.model_dump(mode="json"),
+            warnings=layout_result.warnings,
+            explanations=layout_result.explanations,
+            assumptions=layout_result.assumptions,
+        )
+        db.add(persisted)
+        db.flush()
+        for placement in layout_result.placements:
+            if placement.plant_id is None:
+                continue
+            db.add(
+                LayoutPlacement(
+                    garden_layout_id=persisted.id,
+                    plant_id=placement.plant_id,
+                    cultivar_id=placement.cultivar_id,
+                    quantity=placement.quantity,
+                    grid_cells=placement.grid_cells,
+                    row=placement.row,
+                    col=placement.col,
+                    width=placement.width,
+                    height=placement.height,
+                    x_pct=placement.x_pct,
+                    y_pct=placement.y_pct,
+                    spacing_inches=placement.spacing_inches,
+                    row_spacing_inches=placement.row_spacing_inches,
+                    placement_role=placement.placement_role,
+                    notes=placement.location_notes,
+                    warnings=placement.warnings,
+                )
+            )
+        db.flush()
+        layout_result.layout_id = persisted.id
+        persisted.result = layout_result.model_dump(mode="json")
+        return persisted
+
+    def _sunlight_warnings(self, plants: list[Plant], garden_context: GardenContext | Any | None) -> list[str]:
+        sunlight = _sunlight(garden_context)
+        if sunlight not in {"shade", "part_shade"}:
+            return []
+        warnings: list[str] = []
+        for plant in plants:
+            requirement = (getattr(plant, "sunlight_requirement", "") or "").lower()
+            if "full" in requirement:
+                warnings.append(f"{plant.common_name.title()} prefers full sun; this layout uses a {sunlight.replace('_', ' ')} garden context.")
+        return warnings
+
+
+def _sunlight(garden_context: GardenContext | Any | None) -> str | None:
+    if garden_context is None:
+        return None
+    if hasattr(garden_context, "sunlight_category"):
+        return garden_context.sunlight_category
+    sunlight = getattr(garden_context, "sunlight", None)
+    if sunlight is not None:
+        return getattr(sunlight, "category", None)
+    if isinstance(garden_context, dict):
+        return garden_context.get("sunlight", {}).get("category") or garden_context.get("sunlight_category")
+    return None
