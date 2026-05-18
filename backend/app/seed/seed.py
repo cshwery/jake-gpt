@@ -39,20 +39,25 @@ def run() -> None:
                 db.flush()
             plants_by_name[common_name] = plant
 
+        queued_companion_pairs: set[tuple[int, int]] = set()
         for source, target, rel_type, notes in COMPANIONS:
             if source not in plants_by_name or target not in plants_by_name:
                 continue
+            pair = (plants_by_name[source].id, plants_by_name[target].id)
+            if pair in queued_companion_pairs:
+                continue
             exists = db.scalar(
                 select(PlantCompanion).where(
-                    PlantCompanion.plant_id == plants_by_name[source].id,
-                    PlantCompanion.companion_plant_id == plants_by_name[target].id,
+                    PlantCompanion.plant_id == pair[0],
+                    PlantCompanion.companion_plant_id == pair[1],
                 )
             )
             if exists is None:
+                queued_companion_pairs.add(pair)
                 db.add(
                     PlantCompanion(
-                        plant_id=plants_by_name[source].id,
-                        companion_plant_id=plants_by_name[target].id,
+                        plant_id=pair[0],
+                        companion_plant_id=pair[1],
                         relationship_type=rel_type,
                         notes=notes,
                     )

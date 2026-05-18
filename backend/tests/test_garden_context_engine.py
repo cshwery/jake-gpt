@@ -34,6 +34,8 @@ def test_geometry_valid_polygon_area_centroid_and_bbox() -> None:
     assert summary.area.area_sq_m > 0
     assert 41.999 < summary.centroid.lat < 42.002
     assert -83.001 < summary.centroid.lon < -82.998
+    assert summary.bbox.min_lat <= summary.centroid.lat <= summary.bbox.max_lat
+    assert summary.bbox.min_lon <= summary.centroid.lon <= summary.bbox.max_lon
     assert summary.bbox.min_lat == 42.0
     assert summary.bbox.max_lon == -82.999
 

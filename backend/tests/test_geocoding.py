@@ -11,23 +11,28 @@ from app.services.geocoding import GeocodeResult, MapboxGeocoder, MockGeocoder, 
 
 def test_mapbox_geocoder_maps_api_response(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeResponse:
-        def raise_for_status(self) -> None:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
             return None
 
-        def json(self) -> dict:
-            return {
+        def read(self) -> bytes:
+            return b"""
+            {
                 "features": [
                     {
                         "place_name": "123 Main St, Detroit, Michigan 48201, United States",
                         "center": [-83.0458, 42.3314],
                         "bbox": [-83.046, 42.331, -83.045, 42.332],
                         "relevance": 0.98,
-                        "properties": {"accuracy": "rooftop"},
+                        "properties": {"accuracy": "rooftop"}
                     }
                 ]
             }
+            """
 
-    monkeypatch.setattr("app.services.geocoding.httpx.get", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr("app.services.geocoding.urlopen", lambda *args, **kwargs: FakeResponse())
 
     result = MapboxGeocoder("token").geocode("123 Main St Detroit MI")
 
