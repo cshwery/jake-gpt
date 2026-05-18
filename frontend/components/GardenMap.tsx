@@ -8,6 +8,7 @@ import mapboxgl from "mapbox-gl";
 import { Check, MousePointer2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { GardenRead, GeneratedPlan, PropertyRead } from "@/types/api";
+import { areaCategory, areaWarning, formatArea } from "@/lib/product";
 
 type Props = {
   property: PropertyRead;
@@ -15,21 +16,34 @@ type Props = {
   generatedPlan?: GeneratedPlan | null;
   dimmed?: boolean;
   onPolygon?: (polygon: GeoJSON.Polygon, areaSqM: number) => void;
+  onClearPolygon?: () => void;
+  onSaveBoundary?: () => void;
+  canSaveBoundary?: boolean;
 };
 
 const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 type DrawMode = "select" | "polygon" | "lasso";
 type ScreenPoint = { x: number; y: number };
 
-export function GardenMap({ property, garden, generatedPlan, dimmed = false, onPolygon }: Props) {
+export function GardenMap({ property, garden, generatedPlan, dimmed = false, onPolygon, onClearPolygon, onSaveBoundary, canSaveBoundary = false }: Props) {
   const container = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
   const lassoRef = useRef<ScreenPoint[]>([]);
+  const onPolygonRef = useRef(onPolygon);
+  const onClearPolygonRef = useRef(onClearPolygon);
   const [localPolygon, setLocalPolygon] = useState<GeoJSON.Polygon | null>(garden?.polygon_geojson ?? null);
   const [drawMode, setDrawMode] = useState<DrawMode>("select");
   const [draftPoints, setDraftPoints] = useState<ScreenPoint[]>([]);
   const [isLassoing, setIsLassoing] = useState(false);
+  const [areaSqM, setAreaSqM] = useState<number | null>(garden?.area_sq_m ?? null);
+  const [zoom, setZoom] = useState<number>(19);
+  const areaSqFt = areaSqM == null ? garden?.area_sq_ft ?? null : areaSqM * 10.7639;
+
+  useEffect(() => {
+    onPolygonRef.current = onPolygon;
+    onClearPolygonRef.current = onClearPolygon;
+  }, [onClearPolygon, onPolygon]);
 
   useEffect(() => {
     if (!token || !container.current || mapRef.current) return;
@@ -48,6 +62,8 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
     drawRef.current = draw;
     map.addControl(draw);
     map.addControl(new mapboxgl.NavigationControl(), "top-right");
+    map.addControl(new mapboxgl.ScaleControl({ maxWidth: 120, unit: "imperial" }), "bottom-right");
+    map.on("zoom", () => setZoom(Number(map.getZoom().toFixed(1))));
 
     function handleDraw() {
       const feature = draw.getAll().features.find((item) => item.geometry.type === "Polygon");
@@ -55,17 +71,28 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
       draw.deleteAll();
       draw.add(feature);
       setLocalPolygon(feature.geometry);
-      onPolygon?.(feature.geometry, area(feature));
+      const nextArea = area(feature);
+      setAreaSqM(nextArea);
+      onPolygonRef.current?.(feature.geometry, nextArea);
+    }
+
+    function handleDelete() {
+      setLocalPolygon(null);
+      setAreaSqM(null);
+      onClearPolygonRef.current?.();
     }
 
     map.on("draw.create", handleDraw);
     map.on("draw.update", handleDraw);
+    map.on("draw.delete", handleDelete);
     map.on("load", () => {
       if (garden?.polygon_geojson) {
         const feature: GeoJSON.Feature<GeoJSON.Polygon> = { type: "Feature", properties: {}, geometry: garden.polygon_geojson };
         draw.add(feature);
         const bounds = bbox(feature) as [number, number, number, number];
         map.fitBounds(bounds, { padding: 60, duration: 0 });
+      } else {
+        map.setZoom(Math.max(map.getZoom(), 19));
       }
     });
 
@@ -74,14 +101,26 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
       mapRef.current = null;
       drawRef.current = null;
     };
-  }, [garden?.polygon_geojson, onPolygon, property.latitude, property.longitude]);
+  }, [garden?.polygon_geojson, property.latitude, property.longitude]);
+
+  useEffect(() => {
+    if (!token || !mapRef.current || !drawRef.current || !garden?.polygon_geojson) return;
+    const feature: GeoJSON.Feature<GeoJSON.Polygon> = { type: "Feature", properties: {}, geometry: garden.polygon_geojson };
+    drawRef.current.deleteAll();
+    drawRef.current.add(feature);
+    setLocalPolygon(garden.polygon_geojson);
+    setAreaSqM(garden.area_sq_m);
+    mapRef.current.fitBounds(bbox(feature) as [number, number, number, number], { padding: 80, maxZoom: 21 });
+  }, [garden?.area_sq_m, garden?.polygon_geojson]);
 
   function savePolygon(polygon: GeoJSON.Polygon) {
     const feature: GeoJSON.Feature<GeoJSON.Polygon> = { type: "Feature", properties: {}, geometry: polygon };
+    const nextArea = area(feature);
     setLocalPolygon(polygon);
+    setAreaSqM(nextArea);
     setDraftPoints([]);
     setDrawMode("select");
-    onPolygon?.(polygon, area(feature));
+    onPolygonRef.current?.(polygon, nextArea);
   }
 
   function setMapboxMode(mode: DrawMode) {
@@ -98,12 +137,14 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
   function clearDrawing() {
     drawRef.current?.deleteAll();
     setLocalPolygon(null);
+    setAreaSqM(null);
     setDraftPoints([]);
     setDrawMode("select");
+    onClearPolygonRef.current?.();
   }
 
   function screenToGeo(point: ScreenPoint): [number, number] {
-    return [property.longitude + (point.x - 50) * 0.000008, property.latitude - (point.y - 50) * 0.000006];
+    return [property.longitude + (point.x - 50) * 0.0000032, property.latitude - (point.y - 50) * 0.0000024];
   }
 
   function completeMockPolygon(points: ScreenPoint[]) {
@@ -111,6 +152,16 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
     const ring = points.map(screenToGeo);
     ring.push(ring[0]);
     savePolygon({ type: "Polygon", coordinates: [ring] });
+  }
+
+  function zoomToProperty() {
+    mapRef.current?.flyTo({ center: [property.longitude, property.latitude], zoom: 19, essential: true });
+  }
+
+  function zoomToGarden() {
+    const polygon = garden?.polygon_geojson ?? localPolygon;
+    if (!polygon || !mapRef.current) return;
+    mapRef.current.fitBounds(bbox({ type: "Feature", properties: {}, geometry: polygon }) as [number, number, number, number], { padding: 80, maxZoom: 21 });
   }
 
   function handleMockClick(event: React.PointerEvent<HTMLDivElement>) {
@@ -197,11 +248,12 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
       >
         <div className={dimmed ? "absolute inset-0 bg-white/55" : "absolute inset-0 bg-black/10"} />
         <div className="absolute left-4 top-4 rounded bg-white/90 px-3 py-2 text-sm shadow">
-          Mock satellite view: {property.normalized_address}
+          Mapbox token is not configured. Using mock map mode.
         </div>
+        <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
         <PolygonOverlay polygon={localPolygon} draftPoints={draftPoints} />
         {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={localPolygon} /> : null}
-        {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setDrawMode} clearDrawing={clearDrawing} finishPolygon={() => completeMockPolygon(draftPoints)} canFinish={draftPoints.length >= 3} /> : null}
+        {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setDrawMode} clearDrawing={clearDrawing} finishPolygon={() => completeMockPolygon(draftPoints)} canFinish={draftPoints.length >= 3} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={() => undefined} zoomToGarden={() => undefined} hasGarden={Boolean(garden || localPolygon)} /> : null}
       </div>
     );
   }
@@ -220,8 +272,24 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
         </div>
       ) : null}
       {dimmed ? <div className="pointer-events-none absolute inset-0 rounded-lg bg-white/45" /> : null}
+      <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
       {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={garden?.polygon_geojson ?? localPolygon} /> : null}
-      {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setMapboxMode} clearDrawing={clearDrawing} finishPolygon={() => undefined} canFinish={false} /> : null}
+      {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setMapboxMode} clearDrawing={clearDrawing} finishPolygon={() => undefined} canFinish={false} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={zoomToProperty} zoomToGarden={zoomToGarden} hasGarden={Boolean(garden || localPolygon)} /> : null}
+    </div>
+  );
+}
+
+function MapAreaReadout({ areaSqFt, zoom }: { areaSqFt: number | null; zoom: number }) {
+  const warning = areaSqFt ? areaWarning(areaSqFt) : null;
+  return (
+    <div className="absolute right-4 top-4 max-w-xs rounded-md bg-white/95 p-3 text-xs shadow">
+      <div className="font-semibold">Step 2: Zoom in to your yard</div>
+      <div className="mt-1 text-foreground/70">Draw only the actual planting area, not the whole property.</div>
+      <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1">Tip: most backyard beds are 25-500 sq ft.</div>
+      <div className="mt-2 font-medium">{formatArea(areaSqFt)}</div>
+      {areaSqFt ? <div className="text-foreground/60">{areaCategory(areaSqFt)}</div> : null}
+      <div className="mt-1 text-foreground/60">North ↑ · zoom {zoom.toFixed(1)}</div>
+      {warning ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">{warning}</div> : null}
     </div>
   );
 }
@@ -231,18 +299,28 @@ function DrawingToolbar({
   setMode,
   clearDrawing,
   finishPolygon,
-  canFinish
+  canFinish,
+  onSaveBoundary,
+  canSaveBoundary,
+  zoomToProperty,
+  zoomToGarden,
+  hasGarden
 }: {
   mode: DrawMode;
   setMode: (mode: DrawMode) => void;
   clearDrawing: () => void;
   finishPolygon: () => void;
   canFinish: boolean;
+  onSaveBoundary?: () => void;
+  canSaveBoundary: boolean;
+  zoomToProperty: () => void;
+  zoomToGarden: () => void;
+  hasGarden: boolean;
 }) {
   return (
     <div className="absolute bottom-4 left-4 flex flex-wrap gap-2 rounded-lg bg-white/95 p-2 shadow">
       <Button className={mode === "polygon" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode("polygon"); }}>
-        <MousePointer2 className="mr-2 h-4 w-4" /> Corners
+        <MousePointer2 className="mr-2 h-4 w-4" /> Draw garden boundary
       </Button>
       <Button className={mode === "lasso" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode("lasso"); }}>
         <Pencil className="mr-2 h-4 w-4" /> Lasso
@@ -255,6 +333,9 @@ function DrawingToolbar({
       <Button className="bg-muted text-foreground" onClick={(event) => { event.stopPropagation(); clearDrawing(); }}>
         <Trash2 className="mr-2 h-4 w-4" /> Clear
       </Button>
+      <Button className="bg-muted text-foreground" onClick={(event) => { event.stopPropagation(); zoomToProperty(); }}>Zoom to property</Button>
+      <Button className="bg-muted text-foreground" disabled={!hasGarden} onClick={(event) => { event.stopPropagation(); zoomToGarden(); }}>Zoom to garden</Button>
+      {onSaveBoundary ? <Button disabled={!canSaveBoundary} onClick={(event) => { event.stopPropagation(); onSaveBoundary(); }}>Save garden boundary</Button> : null}
     </div>
   );
 }

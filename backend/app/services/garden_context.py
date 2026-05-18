@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Garden, GardenContext
+from app.services.garden_area import area_warning
 
 SunlightCategory = Literal["full_sun", "part_sun", "part_shade", "shade", "unknown"]
 PrecipitationCategory = Literal["low", "medium", "high"]
@@ -150,13 +151,14 @@ class GardenGeometryService:
         if not validation.valid:
             raise ValueError("; ".join(validation.errors))
         area = self.calculate_area(geojson)
+        warning = area_warning(area.area_sq_ft)
         return GardenGeometrySummary(
             centroid=self.calculate_centroid(geojson),
             bbox=self.calculate_bbox(geojson),
             area=area,
             normalized_geojson=geojson,
             assumptions=["Garden area is calculated server-side with a local geodesic approximation when PostGIS is unavailable."],
-            warnings=[],
+            warnings=[warning] if warning else [],
             raw_source={"geometry_area_source": area.source},
         )
 

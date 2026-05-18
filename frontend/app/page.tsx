@@ -7,7 +7,8 @@ import { GardenMap } from "@/components/GardenMap";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, LayoutResult, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
+import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, GeocodeResult, LayoutResult, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
+import { areaCategory, areaWarning } from "@/lib/product";
 
 type Step = "login" | "address" | "map" | "context" | "plants" | "layout" | "plan";
 
@@ -15,7 +16,11 @@ export default function Home() {
   const [step, setStep] = useState<Step>("login");
   const [token, setToken] = useState<string | null>(() => (typeof window === "undefined" ? null : localStorage.getItem("jakegpt_token")));
   const [property, setProperty] = useState<PropertyRead | null>(null);
+  const [geocode, setGeocode] = useState<GeocodeResult | null>(null);
+  const [addressQuery, setAddressQuery] = useState<string>("");
   const [garden, setGarden] = useState<GardenRead | null>(null);
+  const [draftPolygon, setDraftPolygon] = useState<GeoJSON.Polygon | null>(null);
+  const [draftAreaSqM, setDraftAreaSqM] = useState<number | null>(null);
   const [context, setContext] = useState<GardenContextRead | null>(null);
   const [plants, setPlants] = useState<PlantRead[]>([]);
   const [suggestions, setSuggestions] = useState<PlantSuggestion[]>([]);
@@ -48,27 +53,47 @@ export default function Home() {
     event.preventDefault();
     setError(null);
     const form = new FormData(event.currentTarget);
+    const address = String(form.get("address") ?? "");
     try {
-      const created = await api.request<PropertyRead>("/properties", {
+      const result = await api.request<GeocodeResult>("/properties/geocode", {
         method: "POST",
-        body: JSON.stringify({ address: form.get("address") })
+        body: JSON.stringify({ address })
       });
-      setProperty(created);
-      setStep("map");
+      setAddressQuery(address);
+      setGeocode(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Address lookup failed");
     }
   }
 
-  async function saveGarden(polygon: GeoJSON.Polygon) {
-    if (!property) return;
+  async function confirmProperty() {
+    if (!geocode) return;
+    setError(null);
+    try {
+      const created = await api.request<PropertyRead>("/properties", {
+        method: "POST",
+        body: JSON.stringify({ address: addressQuery || geocode.query })
+      });
+      setProperty(created);
+      setGarden(null);
+      setDraftPolygon(null);
+      setDraftAreaSqM(null);
+      setStep("map");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Property save failed");
+    }
+  }
+
+  async function saveGardenBoundary() {
+    if (!property || !draftPolygon) return;
     setError(null);
     try {
       const created = await api.request<GardenRead>("/gardens", {
         method: "POST",
-        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: polygon })
+        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: draftPolygon })
       });
       setGarden(created);
+      setDraftAreaSqM(created.area_sq_m);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Garden save failed");
     }
@@ -210,17 +235,40 @@ export default function Home() {
       <section className="mx-auto max-w-6xl px-5 py-6">
         {error ? <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
         {step === "login" ? <LoginForm onSubmit={handleLogin} /> : null}
-        {step === "address" ? <AddressForm onSubmit={handleAddress} /> : null}
+        {step === "address" ? <AddressForm onSubmit={handleAddress} geocode={geocode} onConfirm={confirmProperty} /> : null}
         {step === "map" && property ? (
           <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-            <GardenMap property={property} garden={garden} onPolygon={(polygon) => saveGarden(polygon)} />
+            <GardenMap
+              property={property}
+              garden={garden}
+              onPolygon={(polygon, areaSqM) => {
+                setDraftPolygon(polygon);
+                setDraftAreaSqM(areaSqM);
+              }}
+              onClearPolygon={() => {
+                setDraftPolygon(null);
+                setDraftAreaSqM(null);
+              }}
+              onSaveBoundary={saveGardenBoundary}
+              canSaveBoundary={Boolean(draftPolygon)}
+            />
             <Card>
-              <h2 className="mb-2 text-lg font-semibold">Garden Area</h2>
-              <p className="mb-4 text-sm text-foreground/70">Draw one polygon around the usable garden area. JakeGPT stores GeoJSON and the backend calculates authoritative PostGIS area.</p>
+              <h2 className="mb-2 text-lg font-semibold">Draw Map</h2>
+              <ol className="mb-4 list-inside list-decimal space-y-1 text-sm text-foreground/70">
+                <li>Confirm property</li>
+                <li>Zoom in to your yard</li>
+                <li>Draw the actual planting area</li>
+                <li>Confirm size and save</li>
+              </ol>
+              <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
+                <div className="text-xs font-medium uppercase text-foreground/50">Confirmed property</div>
+                <div>{property.normalized_address}</div>
+              </div>
+              <AreaPanel areaSqM={draftAreaSqM ?? garden?.area_sq_m ?? null} />
+              <Button className="mt-4 w-full" disabled={!draftPolygon} onClick={saveGardenBoundary}>Save Garden Boundary</Button>
               {garden ? (
                 <div className="space-y-2 text-sm">
-                  <div>{garden.area_sq_ft.toFixed(0)} sq ft</div>
-                  <div>{garden.area_sq_m.toFixed(1)} sq m</div>
+                  <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3">Saved backend area: {garden.area_sq_ft.toFixed(0)} sq ft</div>
                   <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue</Button>
                 </div>
               ) : null}
@@ -272,7 +320,7 @@ function LoginForm({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>)
   );
 }
 
-function AddressForm({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function AddressForm({ onSubmit, geocode, onConfirm }: { onSubmit: (event: FormEvent<HTMLFormElement>) => void; geocode: GeocodeResult | null; onConfirm: () => void }) {
   return (
     <Card className="mx-auto max-w-xl">
       <h1 className="mb-4 text-2xl font-semibold">Enter Property Address</h1>
@@ -280,7 +328,35 @@ function AddressForm({ onSubmit }: { onSubmit: (event: FormEvent<HTMLFormElement
         <Input name="address" placeholder="123 Garden Lane, Detroit, MI" defaultValue="123 Garden Lane, Detroit, MI" />
         <Button><MapPin className="mr-2 h-4 w-4" />Find</Button>
       </form>
+      {geocode ? (
+        <div className="mt-4 rounded-md border border-border bg-muted/40 p-4 text-sm">
+          <div className="text-xs font-medium uppercase text-foreground/50">Best result</div>
+          <div className="mt-1 font-semibold">{geocode.normalized_address}</div>
+          <div className="mt-1 text-foreground/60">{geocode.provider} · {geocode.latitude.toFixed(5)}, {geocode.longitude.toFixed(5)}</div>
+          <Button className="mt-4" onClick={onConfirm}>Confirm this property</Button>
+        </div>
+      ) : null}
     </Card>
+  );
+}
+
+function AreaPanel({ areaSqM }: { areaSqM: number | null }) {
+  const areaSqFt = areaSqM == null ? null : areaSqM * 10.7639;
+  const warning = areaSqFt == null ? null : areaWarning(areaSqFt);
+  const confirmedAreaSqM = areaSqM ?? 0;
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3 text-sm">
+      <div className="text-xs font-medium uppercase text-foreground/50">Garden area</div>
+      {areaSqFt == null ? (
+        <div className="mt-1 text-foreground/60">Draw a boundary to calculate area.</div>
+      ) : (
+        <>
+          <div className="mt-1 text-lg font-semibold">{areaSqFt.toFixed(0)} sq ft</div>
+          <div>{confirmedAreaSqM.toFixed(1)} sq m · {areaCategory(areaSqFt)}</div>
+          {warning ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">{warning}</div> : null}
+        </>
+      )}
+    </div>
   );
 }
 

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     access_token_minutes: int = 60 * 12
     cors_origins: str = "http://localhost:3000"
     geocoder_api_key: str | None = None
+    mapbox_access_token: str | None = None
+    geocoder_provider: str = "mock"
 
     class Config:
         env_file = ".env"
