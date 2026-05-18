@@ -7,7 +7,7 @@ JakeGPT is a V0 garden planning web app for drawing a garden on a real property,
 This branch is a viable V0, not a production release.
 
 - Login is implemented with manually provisioned users only.
-- Address lookup, hardiness zone, frost date, precipitation, and sunlight context are mock-backed or user-assisted.
+- Address lookup can use Mapbox when configured. Hardiness zone, frost date, precipitation, and sunlight context are mock-backed or user-assisted.
 - The planner is deterministic and rule-based. No LLM agent behavior is required for V0.
 - Map drawing supports free-form corner polygons and lasso-style drawing.
 - The app runs locally with Postgres/PostGIS, Redis, FastAPI, and Next.js.
@@ -61,15 +61,54 @@ Seeded login:
 
 ## Map Tokens
 
-Set `NEXT_PUBLIC_MAPBOX_TOKEN` in `frontend/.env.local` to use real Mapbox satellite tiles and drawing.
+Set these values to use the real Mapbox-backed address and map flow:
+
+Backend `backend/.env`:
+
+```bash
+GEOCODER_PROVIDER=mapbox
+MAPBOX_ACCESS_TOKEN=pk_or_secret_mapbox_token
+```
+
+Frontend `frontend/.env.local`:
+
+```bash
+NEXT_PUBLIC_MAPBOX_TOKEN=pk_mapbox_token
+```
+
+The backend geocoding implementation is behind `app.services.geocoding`. `GEOCODER_PROVIDER=mapbox` calls the Mapbox Geocoding API and persists provider metadata with the property. `GEOCODER_PROVIDER=mock`, or a missing backend token, uses the deterministic mock geocoder for local development and tests.
+
+The frontend uses Mapbox satellite tiles, Mapbox navigation/scale controls, and `@mapbox/mapbox-gl-draw` when `NEXT_PUBLIC_MAPBOX_TOKEN` is configured.
 
 If no token is set, the frontend uses a local mock satellite panel with a sample polygon button so the happy path still works.
+
+## Garden Drawing Workflow
+
+The map flow is designed to prevent accidental parcel-sized gardens:
+
+1. Enter an address and confirm the normalized property returned by the backend geocoder.
+2. Open the satellite map at yard-level zoom, usually zoom 18 or 19.
+3. Zoom in until the intended planting area is clearly visible.
+4. Draw only the actual garden boundary with the polygon tool.
+5. Review live Turf.js area feedback, then save the boundary.
+6. The backend validates and stores the GeoJSON polygon, calculates authoritative area, and returns the saved garden.
+
+Area categories:
+
+- Tiny: less than 25 sq ft
+- Small: 25-100 sq ft
+- Medium: 100-500 sq ft
+- Large: 500-2,000 sq ft
+- Very Large: 2,000-10,000 sq ft
+- Probably Accidental: more than 10,000 sq ft
+
+The UI warns when a garden is unusually small, larger than 2,000 sq ft, or larger than 10,000 sq ft. These warnings are guardrails only; the backend still validates geometry shape and area before persistence.
 
 ## Happy Path
 
 1. Login with the seeded user.
-2. Enter an address. Without a geocoder key, the backend uses the mock geocoder.
-3. Draw one garden polygon or use the mock polygon.
+2. Enter an address and confirm the geocoded property. Without Mapbox configuration, the backend uses the mock geocoder.
+3. Draw one garden polygon on the satellite map or use the mock polygon fallback.
 4. Review simulated garden context and save sunlight context.
 5. Select garden goals and plants.
 6. Generate a deterministic plan.

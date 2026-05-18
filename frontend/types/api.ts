@@ -4,6 +4,23 @@ export type PropertyRead = {
   normalized_address: string;
   latitude: number;
   longitude: number;
+  geocoder_provider?: string | null;
+  geocoder_accuracy?: string | null;
+  geocoder_confidence?: string | null;
+  geocoder_bbox?: number[] | null;
+};
+
+export type GeocodeResult = {
+  provider: string;
+  query: string;
+  normalized_address: string;
+  latitude: number;
+  longitude: number;
+  accuracy?: string | null;
+  confidence?: string | null;
+  bbox?: number[] | null;
+  place_name?: string | null;
+  raw_result: Record<string, unknown>;
 };
 
 export type GardenRead = {
