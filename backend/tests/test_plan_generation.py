@@ -31,6 +31,7 @@ def test_garden_goals_accepts_setup_fields() -> None:
         planting_style="raised_beds",
         using_raised_beds=True,
         raised_beds={"number_of_beds": 2, "bed_shape": "rectangle", "bed_length_ft": 8, "bed_width_ft": 4},
+        start_preference="buy_from_nursery",
         can_start_seeds_indoors=True,
         prefers_buying_starts=False,
         direct_sow_preference="prefer_transplants",

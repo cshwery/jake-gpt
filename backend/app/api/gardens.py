@@ -130,6 +130,7 @@ def generate_recommendations(
         primary_goal=payload.primary_goal,
         maintenance_preference=payload.maintenance_preference,
         experience_level=payload.experience_level,
+        start_preference=payload.start_preference,
         desired_plant_slugs=payload.selected_plant_slugs,
         desired_cultivar_slugs=payload.selected_cultivar_slugs,
         excluded_plant_slugs=payload.excluded_plant_slugs,

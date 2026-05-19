@@ -18,6 +18,7 @@ class GardenGoals(BaseModel):
     planting_style: PlantingStyle = "rows"
     using_raised_beds: bool | None = None
     raised_beds: dict[str, Any] | None = None
+    start_preference: Literal["germinate_myself", "buy_from_nursery", "no_preference"] | None = None
     can_start_seeds_indoors: bool | None = None
     prefers_buying_starts: bool | None = None
     direct_sow_preference: DirectSowPreference | None = None

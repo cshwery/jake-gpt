@@ -220,6 +220,7 @@ export type GardenGoals = {
   planting_style?: "rows" | "intensive_grid" | "raised_beds" | "mixed";
   using_raised_beds?: boolean | null;
   raised_beds?: RaisedBedsSetup | null;
+  start_preference?: "germinate_myself" | "buy_from_nursery" | "no_preference" | null;
   can_start_seeds_indoors?: boolean | null;
   prefers_buying_starts?: boolean | null;
   direct_sow_preference?: "direct_sow_when_reasonable" | "prefer_transplants" | "no_preference" | null;

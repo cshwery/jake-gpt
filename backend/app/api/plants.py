@@ -74,6 +74,7 @@ def suggest(payload: SuggestRequest, db: Session = Depends(get_db), user: User =
             primary_goal=_legacy_goal(payload.goal),
             maintenance_preference=_legacy_maintenance(payload.maintenance_preference),
             experience_level="beginner",
+            start_preference=payload.start_preference,
             notes=payload.free_text_preferences,
         ),
         selected_plant_slugs=selected_slugs,
