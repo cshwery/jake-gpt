@@ -24,6 +24,7 @@ class GardenGoalInput(BaseModel):
     planting_style: Literal["rows", "intensive_grid", "raised_beds", "mixed"] = "rows"
     using_raised_beds: bool | None = None
     raised_beds: dict[str, Any] | None = None
+    start_preference: Literal["germinate_myself", "buy_from_nursery", "no_preference"] | None = None
     can_start_seeds_indoors: bool | None = None
     prefers_buying_starts: bool | None = None
     direct_sow_preference: Literal["direct_sow_when_reasonable", "prefer_transplants", "no_preference"] | None = None
@@ -104,6 +105,7 @@ class GardenRecommendationRequest(BaseModel):
     limit: int = 25
     include_excluded: bool = False
     notes: str | None = None
+    start_preference: Literal["germinate_myself", "buy_from_nursery", "no_preference"] | None = None
 
 
 @dataclass(frozen=True)

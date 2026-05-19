@@ -7,13 +7,14 @@ import MapboxDraw from "@mapbox/mapbox-gl-draw";
 import mapboxgl from "mapbox-gl";
 import { Check, MousePointer2, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { GardenRead, GeneratedPlan, PropertyRead } from "@/types/api";
+import type { GardenRead, GeneratedPlan, LayoutResult, PropertyRead } from "@/types/api";
 import { areaCategory, areaWarning, formatArea } from "@/lib/product";
 
 type Props = {
   property: PropertyRead;
   garden?: GardenRead | null;
   generatedPlan?: GeneratedPlan | null;
+  layout?: LayoutResult | null;
   dimmed?: boolean;
   onPolygon?: (polygon: GeoJSON.Polygon, areaSqM: number) => void;
   onClearPolygon?: () => void;
@@ -25,7 +26,7 @@ const token = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 type DrawMode = "select" | "polygon" | "lasso";
 type ScreenPoint = { x: number; y: number };
 
-export function GardenMap({ property, garden, generatedPlan, dimmed = false, onPolygon, onClearPolygon, onSaveBoundary, canSaveBoundary = false }: Props) {
+export function GardenMap({ property, garden, generatedPlan, layout, dimmed = false, onPolygon, onClearPolygon, onSaveBoundary, canSaveBoundary = false }: Props) {
   const container = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<mapboxgl.Map | null>(null);
   const drawRef = useRef<MapboxDraw | null>(null);
@@ -252,7 +253,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
         </div>
         <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
         <PolygonOverlay polygon={localPolygon} draftPoints={draftPoints} />
-        {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={localPolygon} /> : null}
+        {layout ? <LayoutOverlay layout={layout} polygon={localPolygon} /> : generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={localPolygon} /> : null}
         {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setDrawMode} clearDrawing={clearDrawing} finishPolygon={() => completeMockPolygon(draftPoints)} canFinish={draftPoints.length >= 3} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={() => undefined} zoomToGarden={() => undefined} hasGarden={Boolean(garden || localPolygon)} /> : null}
       </div>
     );
@@ -273,7 +274,7 @@ export function GardenMap({ property, garden, generatedPlan, dimmed = false, onP
       ) : null}
       {dimmed ? <div className="pointer-events-none absolute inset-0 rounded-lg bg-white/45" /> : null}
       <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
-      {generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={garden?.polygon_geojson ?? localPolygon} /> : null}
+      {layout ? <LayoutOverlay layout={layout} polygon={garden?.polygon_geojson ?? localPolygon} /> : generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={garden?.polygon_geojson ?? localPolygon} /> : null}
       {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setMapboxMode} clearDrawing={clearDrawing} finishPolygon={() => undefined} canFinish={false} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={zoomToProperty} zoomToGarden={zoomToGarden} hasGarden={Boolean(garden || localPolygon)} /> : null}
     </div>
   );
@@ -417,6 +418,60 @@ function PlanOverlay({ plan, polygon }: { plan: GeneratedPlan; polygon: GeoJSON.
   );
 }
 
+function LayoutOverlay({ layout, polygon }: { layout: LayoutResult; polygon: GeoJSON.Polygon | null }) {
+  const points = polygon ? geoToScreenPoints(polygon) : rectanglePoints();
+  const bounds = boundsFor(points);
+  const polygonPoints = points.map((point) => `${point.x},${point.y}`).join(" ");
+  const cellWidth = bounds.width / layout.grid.cols;
+  const cellHeight = bounds.height / layout.grid.rows;
+
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+        <defs>
+          <clipPath id="garden-layout-clip">
+            <polygon points={polygonPoints} />
+          </clipPath>
+        </defs>
+        <polygon points={polygonPoints} fill="rgba(255, 255, 255, 0.42)" stroke="rgb(22, 101, 52)" strokeWidth="0.8" />
+        <g clipPath="url(#garden-layout-clip)">
+          {Array.from({ length: layout.grid.cols + 1 }).map((_, index) => {
+            const x = bounds.minX + cellWidth * index;
+            return <line key={`layout-v-${index}`} x1={x} x2={x} y1={bounds.minY} y2={bounds.maxY} stroke="rgba(22, 101, 52, 0.45)" strokeWidth="0.35" />;
+          })}
+          {Array.from({ length: layout.grid.rows + 1 }).map((_, index) => {
+            const y = bounds.minY + cellHeight * index;
+            return <line key={`layout-h-${index}`} x1={bounds.minX} x2={bounds.maxX} y1={y} y2={y} stroke="rgba(22, 101, 52, 0.45)" strokeWidth="0.35" />;
+          })}
+          {layout.grid.cells.map((cell) => {
+            const x = bounds.minX + cell.col * cellWidth;
+            const y = bounds.minY + cell.row * cellHeight;
+            const role = cell.placement_role ?? (cell.is_path ? "path" : cell.label ? "crop" : null);
+            return (
+              <g key={cell.cell_id}>
+                <rect
+                  x={x}
+                  y={y}
+                  width={cellWidth}
+                  height={cellHeight}
+                  fill={cell.is_path ? "rgba(120, 113, 108, 0.18)" : roleFill(role)}
+                  stroke="rgba(22, 101, 52, 0.22)"
+                  strokeWidth="0.2"
+                />
+                {cell.label ? (
+                  <text x={x + cellWidth / 2} y={y + cellHeight / 2} textAnchor="middle" dominantBaseline="middle" fontSize="2.4" fill="rgb(15, 23, 42)">
+                    {cell.label}
+                  </text>
+                ) : null}
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
+
 function rectanglePoints(): ScreenPoint[] {
   return [
     { x: 24, y: 26 },
@@ -434,4 +489,21 @@ function boundsFor(points: ScreenPoint[]) {
   const minY = Math.min(...ys);
   const maxY = Math.max(...ys);
   return { minX, maxX, minY, maxY, width: maxX - minX || 1, height: maxY - minY || 1 };
+}
+
+function roleFill(role: string | null) {
+  switch (role) {
+    case "companion":
+      return "rgba(34, 197, 94, 0.14)";
+    case "pollinator":
+    case "border":
+      return "rgba(245, 158, 11, 0.14)";
+    case "tree":
+    case "shrub":
+      return "rgba(120, 113, 108, 0.16)";
+    case "support":
+      return "rgba(59, 130, 246, 0.12)";
+    default:
+      return "rgba(22, 101, 52, 0.08)";
+  }
 }

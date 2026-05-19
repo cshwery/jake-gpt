@@ -5,11 +5,13 @@ import { MapPin, Save, Sprout } from "lucide-react";
 import { ApiClient } from "@/lib/api";
 import { GardenMap } from "@/components/GardenMap";
 import { GardenLayoutGrid } from "@/components/GardenLayoutGrid";
+import { PlantSelectionPanel } from "@/components/PlantSelectionPanel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, GeocodeResult, LayoutResult, PlantSearchResult, PropertyRead } from "@/types/api";
 import { areaCategory, areaWarning, displayCultivarName, displayPlantName, fitLabel, layoutQualityLabel, recommendationLabel, recommendationReasonLabel, subscoreLabel } from "@/lib/product";
+import { dedupePlantResults, selectionKeyForPlantResult, uniqueNumbers, uniqueStrings } from "@/lib/plantSelection";
 
 type Step = "login" | "address" | "map" | "context" | "setup" | "plants" | "layout" | "plan";
 
@@ -29,6 +31,7 @@ export default function Home() {
   const [plantResults, setPlantResults] = useState<PlantSearchResult[]>([]);
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedPlants, setSelectedPlants] = useState<SelectedPlantItem[]>([]);
+  const [loadingRecommendations, setLoadingRecommendations] = useState(false);
   const [goals, setGoals] = useState<GardenGoals>({
     goal: "Food",
     goals: ["food"],
@@ -39,6 +42,7 @@ export default function Home() {
     planting_style: "rows",
     using_raised_beds: false,
     raised_beds: null,
+    start_preference: "no_preference",
     can_start_seeds_indoors: null,
     prefers_buying_starts: null,
     direct_sow_preference: "no_preference"
@@ -51,7 +55,10 @@ export default function Home() {
     () => uniqueNumbers(selectedPlants.map((item) => item.plant_id).filter((value): value is number => typeof value === "number")),
     [selectedPlants]
   );
-  const selectedPlantSlugs = useMemo(() => uniqueStrings(selectedPlants.filter((item) => item.result_type === "species").map((item) => item.slug).filter(Boolean) as string[]), [selectedPlants]);
+  const selectedPlantSlugs = useMemo(
+    () => uniqueStrings(selectedPlants.map((item) => item.slug).filter(Boolean) as string[]),
+    [selectedPlants]
+  );
   const selectedCultivarSlugs = useMemo(() => uniqueStrings(selectedPlants.map((item) => item.cultivar_slug).filter(Boolean) as string[]), [selectedPlants]);
 
   useEffect(() => {
@@ -61,7 +68,7 @@ export default function Home() {
       try {
         const query = plantQuery.trim();
         const result = await api.request<PlantSearchResult[]>(query ? `/plants?q=${encodeURIComponent(query)}` : "/plants");
-        if (active) setPlantResults(result);
+        if (active) setPlantResults(dedupePlantResults(result));
       } catch (err) {
         if (active) {
           setError(err instanceof Error ? err.message : "Plant load failed");
@@ -192,7 +199,7 @@ export default function Home() {
     setError(null);
     try {
       const allPlants = await api.request<PlantSearchResult[]>("/plants");
-      setPlantResults(allPlants);
+      setPlantResults(dedupePlantResults(allPlants));
       setPlantQuery("");
       setStep("plants");
     } catch (err) {
@@ -201,24 +208,46 @@ export default function Home() {
   }
 
   async function loadSuggestions() {
-    if (!garden) return;
-    const selectedSlugs = selectedPlantSlugs;
-    const result = await api.request<GardenRecommendationResult>(`/gardens/${garden.id}/recommendations/generate`, {
-      method: "POST",
-      body: JSON.stringify({
-        goals: recommendationGoals(goals),
-        primary_goal: goalToApi(goals.goal),
-        maintenance_preference: goals.maintenance_preference.toLowerCase(),
-        experience_level: goals.experience_level ?? "beginner",
-        selected_plant_slugs: selectedSlugs,
-        selected_cultivar_slugs: selectedCultivarSlugs,
-        excluded_plant_slugs: [],
-        limit: 25,
-        include_excluded: false,
-        notes: goals.free_text_preferences ?? null
-      })
-    });
-    setRecommendations(result);
+    if (!garden) {
+      setError("Save a garden before generating recommendations.");
+      return;
+    }
+    if (!context) {
+      setError("Generate garden context before recommendations.");
+      return;
+    }
+    if (selectedPlants.length === 0) {
+      setError("Select at least one plant before generating recommendations.");
+      return;
+    }
+    setLoadingRecommendations(true);
+    setError(null);
+    try {
+      const result = await api.request<GardenRecommendationResult>(`/gardens/${garden.id}/recommendations/generate`, {
+        method: "POST",
+        body: JSON.stringify({
+          goals: recommendationGoals(goals),
+          primary_goal: goalToApi(goals.goal),
+          maintenance_preference: goals.maintenance_preference.toLowerCase(),
+          experience_level: goals.experience_level ?? "beginner",
+          selected_plant_slugs: selectedPlantSlugs,
+          selected_cultivar_slugs: selectedCultivarSlugs,
+          excluded_plant_slugs: [],
+          limit: 25,
+          include_excluded: false,
+          notes: goals.free_text_preferences ?? null,
+          start_preference: goals.start_preference ?? "no_preference",
+          can_start_seeds_indoors: goals.can_start_seeds_indoors,
+          prefers_buying_starts: goals.prefers_buying_starts,
+          direct_sow_preference: goals.direct_sow_preference
+        })
+      });
+      setRecommendations(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Recommendation generation failed");
+    } finally {
+      setLoadingRecommendations(false);
+    }
   }
 
   async function generatePlan() {
@@ -254,6 +283,7 @@ export default function Home() {
         })
       });
       setLayout(generated);
+      setPlan(null);
       if (persistSelection) setStep(nextStep);
       return generated;
     } catch (err) {
@@ -273,7 +303,7 @@ export default function Home() {
 
   function toggleSelection(item: PlantSearchResult) {
     setSelectedPlants((current) => {
-      const key = selectionKeyForResult(item);
+      const key = selectionKeyForPlantResult(item);
       const existing = current.find((entry) => entry.selection_key === key);
       if (existing) {
         return current.filter((entry) => entry.selection_key !== key);
@@ -339,7 +369,7 @@ export default function Home() {
         {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToSetup} /> : null}
         {step === "setup" ? <GoalsSetupForm goals={goals} setGoals={setGoals} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
-          <PlantSelection
+          <PlantSelectionPanel
             plantResults={plantResults}
             plantQuery={plantQuery}
             setPlantQuery={setPlantQuery}
@@ -347,15 +377,16 @@ export default function Home() {
             onToggleSelection={toggleSelection}
             recommendations={recommendations}
             goals={goals}
-            loadSuggestions={loadSuggestions}
-            generateLayout={() => generateLayout("layout")}
+            onGenerateRecommendations={loadSuggestions}
+            onGenerateLayout={() => generateLayout("layout")}
+            loadingRecommendations={loadingRecommendations}
           />
         ) : null}
-        {step === "layout" && layout ? (
-          <LayoutScreen layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
+        {step === "layout" && property && garden && layout ? (
+          <LayoutScreen property={property} garden={garden} layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
         {step === "plan" && property && garden && plan && layout ? (
-          <PlanScreen layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
+          <PlanScreen property={property} garden={garden} layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
         ) : null}
       </section>
     </main>
@@ -575,16 +606,11 @@ function GoalsSetupForm({
             />
           ) : null}
           <LabelSelect
-            label="Can you start seeds indoors?"
-            value={goals.can_start_seeds_indoors === true ? "Yes" : goals.can_start_seeds_indoors === false ? "No" : "Not sure"}
-            onChange={(value) => setGoals({ ...goals, can_start_seeds_indoors: value === "Yes" ? true : value === "No" ? false : null })}
-            options={["Yes", "No", "Not sure"]}
-          />
-          <LabelSelect
-            label="Do you prefer buying plant starts when a plant is hard to direct sow?"
-            value={goals.prefers_buying_starts === true ? "Yes" : goals.prefers_buying_starts === false ? "No" : "No preference"}
-            onChange={(value) => setGoals({ ...goals, prefers_buying_starts: value === "Yes" ? true : value === "No" ? false : null })}
-            options={["Yes", "No", "No preference"]}
+            label="How do you prefer to get plant starts?"
+            value={goals.start_preference ?? "no_preference"}
+            onChange={(value) => setGoals(syncStartPreference(goals, value as GardenGoals["start_preference"]))}
+            options={["germinate_myself", "buy_from_nursery", "no_preference"]}
+            displayOptions={["Germinate myself indoors or in a greenhouse", "Buy starts from a nursery", "No preference"]}
           />
           <LabelSelect
             label="Direct sow preference"
@@ -797,16 +823,33 @@ function PlantCard({ plant, selected, onToggle }: { plant: PlantSearchResult; se
   );
 }
 
-function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
+function LayoutScreen({
+  property,
+  garden,
+  layout,
+  onRegenerate,
+  onContinue,
+  onBack
+}: {
+  property: PropertyRead;
+  garden: GardenRead;
+  layout: LayoutResult;
+  onRegenerate: () => void;
+  onContinue: () => void;
+  onBack: () => void;
+}) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <GardenLayoutGrid layout={layout} title="Layout" />
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-5">
+        <GardenMap property={property} garden={garden} layout={layout} />
+        <GardenLayoutGrid layout={layout} title="Layout" />
+      </div>
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Layout Actions</h2>
         <p className="text-sm text-foreground/70">{layout.summary}</p>
         <div className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
-          <div className="font-semibold">Overall</div>
-          <div>{layoutQualityLabel(layout.score_breakdown.total_score)}</div>
+          <div className="font-semibold">{layoutQualityLabel(layout.score_breakdown.total_score)}</div>
+          <div className="text-xs text-foreground/60">Top of the grid represents north.</div>
         </div>
         <div className="mt-4 space-y-2 text-sm text-foreground/70">
           <div>Spacing: {subscoreLabel(layout.score_breakdown.spacing_score)}</div>
@@ -827,10 +870,31 @@ function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: La
   );
 }
 
-function PlanScreen({ layout, plan, onRegenerate, onContinue, onBack, onSave }: { layout: LayoutResult; plan: GeneratedPlan; onRegenerate: () => void; onContinue: () => void; onBack: () => void; onSave: () => void }) {
+function PlanScreen({
+  property,
+  garden,
+  layout,
+  plan,
+  onRegenerate,
+  onContinue,
+  onBack,
+  onSave
+}: {
+  property: PropertyRead;
+  garden: GardenRead;
+  layout: LayoutResult;
+  plan: GeneratedPlan;
+  onRegenerate: () => void;
+  onContinue: () => void;
+  onBack: () => void;
+  onSave: () => void;
+}) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <GardenLayoutGrid layout={layout} generatedPlan={plan} title="Plan" />
+    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="space-y-5">
+        <GardenMap property={property} garden={garden} layout={layout} />
+        <GardenLayoutGrid layout={layout} title="Plan" />
+      </div>
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Generated Plan</h2>
         <p className="text-sm text-foreground/70">{plan.summary}</p>
@@ -927,14 +991,6 @@ function recommendationReasons(reasonCodes: string[], explanation: string) {
   return reasons.length ? reasons : [explanation];
 }
 
-function uniqueStrings(values: string[]) {
-  return Array.from(new Set(values));
-}
-
-function uniqueNumbers(values: number[]) {
-  return Array.from(new Set(values));
-}
-
 function MessageList({ title, items, className = "border-border bg-muted/40 text-foreground/70" }: { title: string; items: string[]; className?: string }) {
   if (!items.length) return null;
   return (
@@ -976,4 +1032,15 @@ function goalToApi(goal: string) {
 function recommendationGoals(goals: GardenGoals) {
   const primary = goalToApi(goals.goal);
   return primary === "combination" ? ["food", "flowers", "pollinators", "combination"] : [primary];
+}
+
+function syncStartPreference(goals: GardenGoals, startPreference: GardenGoals["start_preference"]) {
+  const next = startPreference ?? "no_preference";
+  const legacy =
+    next === "germinate_myself"
+      ? { can_start_seeds_indoors: true, prefers_buying_starts: false, direct_sow_preference: "no_preference" as const }
+      : next === "buy_from_nursery"
+        ? { can_start_seeds_indoors: false, prefers_buying_starts: true, direct_sow_preference: "prefer_transplants" as const }
+        : { can_start_seeds_indoors: null, prefers_buying_starts: null, direct_sow_preference: "no_preference" as const };
+  return { ...goals, start_preference: next, ...legacy };
 }

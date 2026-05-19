@@ -39,6 +39,7 @@ class SuggestRequest(BaseModel):
     goal: str
     maintenance_preference: str
     sunlight: str
+    start_preference: str | None = None
     selected_plant_ids: list[int] = []
     free_text_preferences: str | None = None
 
