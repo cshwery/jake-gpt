@@ -3,9 +3,9 @@ import { displayCultivarName, displayPlantName, titleCase } from "@/lib/product"
 
 export function selectionKeyForPlantResult(item: PlantSearchResult): string {
   if (item.result_type === "cultivar") {
-    return `cultivar:${item.cultivar_id ?? item.cultivar_slug ?? item.slug ?? item.plant_id ?? item.common_name}`;
+    return `cultivar:${normalizedIdentity(item.cultivar_slug ?? item.cultivar_name ?? item.display_name ?? null) ?? item.cultivar_id ?? normalizedIdentity(item.slug ?? item.common_name) ?? item.plant_id ?? item.id}`;
   }
-  return `species:${item.plant_id ?? item.slug ?? item.common_name}`;
+  return `species:${normalizedIdentity(item.slug ?? item.common_name) ?? item.plant_id ?? item.id}`;
 }
 
 export function displayPlantResultName(item: PlantSearchResult): string {
@@ -104,4 +104,9 @@ function hashString(value: string) {
     hash |= 0;
   }
   return hash || 1;
+}
+
+function normalizedIdentity(value: string | null | undefined) {
+  const normalized = value?.trim().toLowerCase().replace(/\s+/g, "-");
+  return normalized || null;
 }

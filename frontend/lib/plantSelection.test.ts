@@ -52,6 +52,11 @@ describe("plantSelection helpers", () => {
     expect(dedupePlantResults(results)).toHaveLength(1);
   });
 
+  it("deduplicates species rows with different ids but the same slug", () => {
+    const results = [species({ id: 1, plant_id: 1 }), species({ id: 2, plant_id: 2 })];
+    expect(dedupePlantResults(results)).toHaveLength(1);
+  });
+
   it("keeps cultivar rows distinct from species rows", () => {
     const results = dedupePlantResults([species(), cultivar()]);
     expect(results).toHaveLength(2);

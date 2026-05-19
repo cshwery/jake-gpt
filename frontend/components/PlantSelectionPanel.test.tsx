@@ -101,6 +101,12 @@ describe("PlantSelectionPanel", () => {
     expect(screen.getAllByText("Tomato").length).toBeGreaterThan(0);
   });
 
+  it("shows one species card when duplicate rows have different ids", () => {
+    render(<Harness plantResults={[species(1, "tomato", "tomato"), species(2, "tomato", "tomato")]} />);
+
+    expect(screen.getAllByRole("button", { name: "Add Tomato" })).toHaveLength(1);
+  });
+
   it("keeps species and cultivar selections distinct", () => {
     render(<Harness plantResults={[species(), cultivar()]} />);
 
