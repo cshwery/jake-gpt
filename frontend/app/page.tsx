@@ -844,6 +844,15 @@ function LayoutScreen({
         <GardenMap property={property} garden={garden} layout={layout} />
         <GardenLayoutGrid layout={layout} title="Layout" />
       </div>
+      <div className="mt-2 text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
+    </button>
+  );
+}
+
+function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
+  return (
+    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+      <GardenLayoutGrid layout={layout} title="Layout" />
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Layout Actions</h2>
         <p className="text-sm text-foreground/70">{layout.summary}</p>
