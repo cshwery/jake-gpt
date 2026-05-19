@@ -34,6 +34,7 @@ class GridCell(BaseModel):
     plant_slug: str | None = None
     cultivar_slug: str | None = None
     label: str | None = None
+    placement_role: PlacementRole | None = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -123,6 +124,9 @@ class LayoutResult(BaseModel):
     garden_plan_id: int | None = None
     recommendation_run_id: int | None = None
     summary: str = "Deterministic JakeGPT layout."
+    area_sq_ft: float | None = None
+    area_category: str | None = None
+    approximate_dimensions_ft: dict[str, float] | None = None
     grid: GardenGrid
     placements: list[LayoutPlacementDTO]
     paths: list[LayoutPathDTO] = Field(default_factory=list)

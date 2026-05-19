@@ -153,12 +153,24 @@ export type GeneratedPlan = {
   goals: GardenGoals;
 };
 
+export type RaisedBedsSetup = {
+  number_of_beds?: number | null;
+  bed_shape?: "rectangle" | "square" | "custom" | null;
+  bed_length_ft?: number | null;
+  bed_width_ft?: number | null;
+  bed_area_sq_ft?: number | null;
+  notes?: string | null;
+};
+
 export type LayoutResult = {
   layout_id?: number | null;
   garden_id?: number | null;
   garden_plan_id?: number | null;
   recommendation_run_id?: number | null;
   summary: string;
+  area_sq_ft?: number | null;
+  area_category?: string | null;
+  approximate_dimensions_ft?: { width: number; height: number; grid_area_sq_ft?: number } | null;
   grid: {
     rows: number;
     cols: number;
@@ -173,6 +185,7 @@ export type LayoutResult = {
       plant_slug?: string | null;
       cultivar_slug?: string | null;
       label?: string | null;
+      placement_role?: string | null;
       notes: string[];
     }>;
     access_paths: string[];
@@ -198,9 +211,26 @@ export type LayoutResult = {
 };
 
 export type GardenGoals = {
+  goals?: string[];
   goal: string;
   maintenance_preference: string;
   experience_level?: string;
   sunlight: string;
   free_text_preferences?: string | null;
+  planting_style?: "rows" | "intensive_grid" | "raised_beds" | "mixed";
+  using_raised_beds?: boolean | null;
+  raised_beds?: RaisedBedsSetup | null;
+  can_start_seeds_indoors?: boolean | null;
+  prefers_buying_starts?: boolean | null;
+  direct_sow_preference?: "direct_sow_when_reasonable" | "prefer_transplants" | "no_preference" | null;
+};
+
+export type PlantSearchResult = PlantRead & {
+  result_type: "species" | "cultivar";
+  plant_id?: number | null;
+  cultivar_id?: number | null;
+  cultivar_slug?: string | null;
+  cultivar_name?: string | null;
+  display_name?: string | null;
+  cultivar_notes?: string | null;
 };

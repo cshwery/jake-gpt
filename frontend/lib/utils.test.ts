@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cn } from "./utils";
-import { areaCategory, areaWarning } from "./product";
+import { areaCategory, areaWarning, fitLabel, layoutQualityLabel, recommendationLabel, recommendationReasonLabel, subscoreLabel } from "./product";
 
 describe("cn", () => {
   it("merges class names", () => {
@@ -17,5 +17,14 @@ describe("cn", () => {
     expect(areaWarning(24)).toContain("tiny garden");
     expect(areaWarning(2001)).toContain("very large");
     expect(areaWarning(10001)).toContain("wrong zoom level");
+  });
+
+  it("maps recommendation and layout scores to product labels", () => {
+    expect(fitLabel(90)).toBe("Excellent Fit");
+    expect(fitLabel(40)).toBe("Poor Fit");
+    expect(recommendationLabel("warning_only")).toBe("Review Before Planting");
+    expect(recommendationReasonLabel("POLLINATOR_SUPPORT")).toContain("pollinators");
+    expect(layoutQualityLabel(90)).toBe("Excellent Layout");
+    expect(subscoreLabel(20)).toBe("Needs Review");
   });
 });

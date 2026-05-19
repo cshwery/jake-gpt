@@ -21,6 +21,8 @@ def test_layout_engine_creates_expected_grid_rows_and_columns() -> None:
 
     assert result.layout_grid["cols"] == 4
     assert result.layout_grid["rows"] == 3
+    assert result.layout_grid["orientation"] == "north_up"
+    assert result.layout_grid["cell_size_ft"] == 2
     assert result.layout_grid["access_paths"] == ["between every grid row"]
 
 
@@ -130,6 +132,7 @@ def test_layout_engine_v1_scores_and_explains_candidates() -> None:
     assert result.score_breakdown.total_score != 0
     assert result.score_breakdown.companion_score > 0
     assert result.paths
+    assert any(placement.placement_role for placement in result.placements)
     assert any("rectangular grid" in assumption for assumption in result.assumptions)
     assert any("companion graph" in explanation for explanation in result.explanations)
 

@@ -48,6 +48,7 @@ class PlacementPlanner:
             cell.plant_slug = _plant_slug(plant)
             cell.cultivar_slug = cultivar.slug if cultivar else None
             cell.label = plant.common_name.title()
+            cell.placement_role = role
             notes = f"{spacing} in spacing; {plant.planting_notes}"
             if cultivar:
                 notes = f"{cultivar.cultivar_name}: {notes}"

@@ -283,8 +283,8 @@ function MapAreaReadout({ areaSqFt, zoom }: { areaSqFt: number | null; zoom: num
   const warning = areaSqFt ? areaWarning(areaSqFt) : null;
   return (
     <div className="absolute right-4 top-4 max-w-xs rounded-md bg-white/95 p-3 text-xs shadow">
-      <div className="font-semibold">Step 2: Zoom in to your yard</div>
-      <div className="mt-1 text-foreground/70">Draw only the actual planting area, not the whole property.</div>
+      <div className="font-semibold">Step 1: Confirm property and zoom in</div>
+      <div className="mt-1 text-foreground/70">Click each corner of the garden polygon. Draw only the actual planting area, not the whole property.</div>
       <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1">Tip: most backyard beds are 25-500 sq ft.</div>
       <div className="mt-2 font-medium">{formatArea(areaSqFt)}</div>
       {areaSqFt ? <div className="text-foreground/60">{areaCategory(areaSqFt)}</div> : null}
@@ -319,11 +319,11 @@ function DrawingToolbar({
 }) {
   return (
     <div className="absolute bottom-4 left-4 flex flex-wrap gap-2 rounded-lg bg-white/95 p-2 shadow">
-      <Button className={mode === "polygon" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode("polygon"); }}>
-        <MousePointer2 className="mr-2 h-4 w-4" /> Draw garden boundary
+      <Button className={mode === "polygon" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode(mode === "polygon" ? "select" : "polygon"); }}>
+        <MousePointer2 className="mr-2 h-4 w-4" /> {mode === "polygon" ? "Complete garden" : hasGarden ? "Edit garden boundary" : "Draw garden by choosing corners"}
       </Button>
-      <Button className={mode === "lasso" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode("lasso"); }}>
-        <Pencil className="mr-2 h-4 w-4" /> Lasso
+      <Button className={mode === "lasso" ? "" : "bg-muted text-foreground"} onClick={(event) => { event.stopPropagation(); setMode(mode === "lasso" ? "select" : "lasso"); }}>
+        <Pencil className="mr-2 h-4 w-4" /> Draw by hand
       </Button>
       {canFinish ? (
         <Button className="bg-accent text-foreground" onClick={(event) => { event.stopPropagation(); finishPolygon(); }}>

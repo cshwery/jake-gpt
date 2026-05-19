@@ -10,6 +10,7 @@ This branch is a viable V0, not a production release.
 - Address lookup can use Mapbox when configured. Hardiness zone, frost date, precipitation, and sunlight context are mock-backed or user-assisted.
 - The planner is deterministic and rule-based. No LLM agent behavior is required for V0.
 - Map drawing supports free-form corner polygons and lasso-style drawing.
+- The product flow now runs in this order: Address / Draw Garden -> Garden Context -> Goals & Setup -> Plant Selection -> Recommendations -> Layout -> Plan.
 - The app runs locally with Postgres/PostGIS, Redis, FastAPI, and Next.js.
 - The companion planting pipeline is the most mature data workflow: generated candidates are reviewed before becoming canonical recommendation data.
 
@@ -112,9 +113,20 @@ The UI warns when a garden is unusually small, larger than 2,000 sq ft, or large
 2. Enter an address and confirm the geocoded property. Without Mapbox configuration, the backend uses the mock geocoder.
 3. Draw one garden polygon on the satellite map or use the mock polygon fallback.
 4. Review simulated garden context and save sunlight context.
-5. Select garden goals and plants.
-6. Generate a deterministic plan.
-7. View the dimmed map with grid labels and save the plan.
+5. Complete the Goals & Setup step, including raised beds, rows, and indoor-start preferences.
+6. Select garden plants and cultivars.
+7. Generate recommendations, then generate a deterministic layout.
+8. Generate and save the plan.
+
+## Usability Conventions
+
+- Recommendation cards show fit labels instead of raw numeric scores in the UI.
+- Layout cards show layout quality labels instead of raw numeric layout scores in the UI.
+- Garden area is grouped into Tiny, Small, Medium, Large, Very Large, and Probably Accidental.
+- The top of the layout grid represents north.
+- Layout and Plan tabs render from the same canonical layout data and shared grid component.
+- Free-text preferences remain available, with a placeholder such as: `I want to have some food each week rather than one big harvest`.
+- Raised beds are captured in goals/setup for now; draggable raised-bed placement is a future feature.
 
 ## Companion Pipeline
 
