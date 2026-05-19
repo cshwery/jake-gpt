@@ -3,7 +3,7 @@ import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PlantSelectionPanel } from "./PlantSelectionPanel";
-import type { GardenGoals, PlantSearchResult } from "@/types/api";
+import type { GardenGoals, GardenRecommendationResult, PlantSearchResult } from "@/types/api";
 import { selectionKeyForPlantResult } from "@/lib/plantSelection";
 
 function species(id = 1, slug = "tomato", commonName = "tomato"): PlantSearchResult {
@@ -48,7 +48,15 @@ function cultivar(id = 10, slug = "tomato_sungold", cultivarName = "Sungold"): P
   };
 }
 
-function Harness({ plantResults }: { plantResults: PlantSearchResult[] }) {
+function Harness({
+  plantResults,
+  recommendations = null,
+  onGenerateLayout = vi.fn()
+}: {
+  plantResults: PlantSearchResult[];
+  recommendations?: GardenRecommendationResult | null;
+  onGenerateLayout?: () => Promise<void>;
+}) {
   const [selectedPlants, setSelectedPlants] = useState<Array<PlantSearchResult & { selection_key: string }>>([]);
   const goals: GardenGoals = {
     goal: "Food",
@@ -82,12 +90,36 @@ function Harness({ plantResults }: { plantResults: PlantSearchResult[] }) {
           return [...current, { ...plant, selection_key: key }];
         });
       }}
-      recommendations={null}
+      recommendations={recommendations}
       goals={goals}
       onGenerateRecommendations={vi.fn()}
-      onGenerateLayout={vi.fn()}
+      onGenerateLayout={onGenerateLayout}
     />
   );
+}
+
+function recommendationResult(): GardenRecommendationResult {
+  return {
+    garden_id: 1,
+    summary: "Recommended plants.",
+    selected: ["tomato"],
+    recommendations: [
+      {
+        plant_slug: "tomato",
+        plant_common_name: "Tomato",
+        cultivar_recommendations: [{ cultivar_slug: "tomato_sungold", cultivar_name: "Sungold", score: 30, reason_codes: [] }],
+        recommendation_type: "goal_fit",
+        score: 100,
+        score_breakdown: {},
+        reason_codes: ["SUNLIGHT_MATCH"],
+        warnings: [],
+        explanation: "Good fit."
+      }
+    ],
+    warnings: [],
+    excluded: [],
+    assumptions: []
+  };
 }
 
 describe("PlantSelectionPanel", () => {
@@ -115,6 +147,21 @@ describe("PlantSelectionPanel", () => {
     expect(screen.getAllByText("Selected plants: 1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Tomato — Sungold").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Added ✓").length).toBeGreaterThan(0);
+  });
+
+  it("marks cultivar recommendations as added when only species rows are loaded", () => {
+    render(<Harness plantResults={[species()]} recommendations={recommendationResult()} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Tomato — Sungold" }));
+
+    expect(screen.getAllByRole("button", { name: "Remove Tomato — Sungold" }).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Tomato — Sungold").length).toBeGreaterThan(0);
+  });
+
+  it("shows a layout action with recommendations", () => {
+    render(<Harness plantResults={[species()]} recommendations={recommendationResult()} />);
+
+    expect(screen.getAllByRole("button", { name: "Generate Layout" }).length).toBeGreaterThan(0);
   });
 
   it("shows helper copy for selection", () => {

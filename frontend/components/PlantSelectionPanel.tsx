@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Sprout } from "lucide-react";
+import { Sprout, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -48,8 +48,10 @@ export function PlantSelectionPanel({
   const recommendationCards = recommendations?.recommendations.slice(0, 8) ?? [];
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
-      <div className="space-y-5">
+    <div className="space-y-5">
+      <SelectedPlantsSummary selectedPlants={selectedPlants} onGenerateLayout={onGenerateLayout} />
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="space-y-5">
         <Card>
           <h2 className="mb-2 text-lg font-semibold">Search plants</h2>
           <p className="mb-3 text-sm text-foreground/70">Pick plants you definitely want to include. JakeGPT will recommend good supplemental plant choices.</p>
@@ -65,7 +67,12 @@ export function PlantSelectionPanel({
 
         {recommendations ? (
           <Card>
-            <h3 className="mb-3 text-lg font-semibold">Recommendations</h3>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold">Recommendations</h3>
+              <Button type="button" disabled={selectedPlants.length === 0} onClick={onGenerateLayout}>
+                Generate Layout
+              </Button>
+            </div>
             <p className="mb-4 text-sm text-foreground/70">{recommendations.summary}</p>
             {recommendations.warnings.length ? (
               <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -109,43 +116,81 @@ export function PlantSelectionPanel({
                 );
               })}
             </div>
+            <div className="mt-4 flex justify-end">
+              <Button type="button" disabled={selectedPlants.length === 0} onClick={onGenerateLayout}>
+                Generate Layout
+              </Button>
+            </div>
           </Card>
         ) : null}
 
         <Card>
           <h3 className="mb-3 text-lg font-semibold">Species</h3>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+          <div className="max-h-[540px] overflow-y-auto pr-2">
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {species.map((plant) => (
               <PlantCard key={selectionKeyForPlantResult(plant)} plant={plant} selected={selectedKeys.has(selectionKeyForPlantResult(plant))} onToggle={onToggleSelection} />
             ))}
+            </div>
           </div>
         </Card>
 
         {cultivars.length ? (
           <Card>
             <h3 className="mb-3 text-lg font-semibold">Cultivars</h3>
-            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="max-h-[420px] overflow-y-auto pr-2">
+              <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {cultivars.map((plant) => (
                 <PlantCard key={selectionKeyForPlantResult(plant)} plant={plant} selected={selectedKeys.has(selectionKeyForPlantResult(plant))} onToggle={onToggleSelection} />
               ))}
+              </div>
             </div>
           </Card>
         ) : null}
       </div>
 
-      <div className="space-y-4">
-        <SelectedPlantsTray selectedPlants={selectedPlants} onToggleSelection={onToggleSelection} />
-        <Card>
-          <h3 className="mb-3 text-lg font-semibold">Next steps</h3>
-          <div className="space-y-2 text-sm text-foreground/70">
-            <div>Selected plants: {selectedPlants.length}</div>
-            <div>Goal: {goals.goal}</div>
-            <div>Planting style: {goals.planting_style ?? "rows"}</div>
+        <div className="space-y-4">
+          <Card>
+            <h3 className="mb-3 text-lg font-semibold">Next steps</h3>
+            <div className="space-y-2 text-sm text-foreground/70">
+              <div>Selected plants: {selectedPlants.length}</div>
+              <div>Goal: {goals.goal}</div>
+              <div>Planting style: {goals.planting_style ?? "rows"}</div>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button className="w-full" disabled={selectedPlants.length === 0} onClick={onGenerateLayout}>Generate Layout</Button>
+            </div>
+          </Card>
+          <SelectedPlantsTray selectedPlants={selectedPlants} onToggleSelection={onToggleSelection} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SelectedPlantsSummary({
+  selectedPlants,
+  onGenerateLayout
+}: {
+  selectedPlants: SelectedPlantItem[];
+  onGenerateLayout: () => Promise<LayoutResult | void>;
+}) {
+  return (
+    <div className="rounded-md border border-border bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Selected plants: {selectedPlants.length}</div>
+          <div className="mt-1 flex max-h-16 flex-wrap gap-2 overflow-y-auto pr-2 text-xs text-foreground/70">
+            {selectedPlants.length ? selectedPlants.map((item) => (
+              <span key={item.selection_key} className="rounded-full border border-border bg-muted/40 px-2 py-1">
+                {displayPlantResultName(item)}
+              </span>
+            )) : <span>No plants selected yet.</span>}
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button className="w-full" disabled={selectedPlants.length === 0} onClick={onGenerateLayout}>Generate Layout</Button>
-          </div>
-        </Card>
+        </div>
+        <Button type="button" disabled={selectedPlants.length === 0} onClick={onGenerateLayout}>
+          Generate Layout
+        </Button>
       </div>
     </div>
   );
@@ -159,17 +204,21 @@ function SelectedPlantsTray({
   onToggleSelection: (plant: PlantSearchResult) => void;
 }) {
   return (
-    <Card className="sticky top-4">
+    <Card>
       <h3 className="mb-2 text-lg font-semibold">Selected for your garden</h3>
-      <div className="mb-4 text-sm text-foreground/70">Selected plants: {selectedPlants.length}</div>
-      <div className="space-y-2">
+      <div className="mb-3 text-sm text-foreground/70">{selectedPlants.length} selected</div>
+      <div className="max-h-[420px] space-y-1.5 overflow-y-auto pr-2">
         {selectedPlants.length ? selectedPlants.map((item) => (
-          <div key={item.selection_key} className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-            <div>
-              <div className="font-medium">{displayPlantResultName(item)}</div>
-              <div className="text-xs text-foreground/60">{item.result_type === "cultivar" ? "Cultivar" : "Species"}</div>
-            </div>
-            <Button className="h-8 bg-muted px-3 text-xs text-foreground" type="button" aria-label={`Remove ${displayPlantResultName(item)}`} onClick={() => onToggleSelection(item)}>Remove</Button>
+          <div key={item.selection_key} className="flex min-h-9 items-center justify-between gap-2 rounded-md border border-border bg-muted/30 py-1.5 pl-2.5 pr-1.5 text-sm">
+            <div className="min-w-0 truncate font-medium">{displayPlantResultName(item)}</div>
+            <Button
+              className="h-7 w-7 shrink-0 bg-transparent p-0 text-foreground/60 hover:bg-muted hover:text-foreground"
+              type="button"
+              aria-label={`Remove ${displayPlantResultName(item)}`}
+              onClick={() => onToggleSelection(item)}
+            >
+              <X className="h-4 w-4" />
+            </Button>
           </div>
         )) : <div className="text-sm text-foreground/60">Nothing selected yet.</div>}
       </div>

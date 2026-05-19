@@ -53,7 +53,6 @@ export function recommendationTarget(
   if (cultivarSlug) {
     return (
       results.find((result) => result.result_type === "cultivar" && result.cultivar_slug === cultivarSlug) ??
-      results.find((result) => result.result_type === "species" && result.slug === item.plant_slug) ??
       syntheticRecommendationResult(item, true)
     );
   }

@@ -229,7 +229,7 @@ export default function Home() {
           goals: recommendationGoals(goals),
           primary_goal: goalToApi(goals.goal),
           maintenance_preference: goals.maintenance_preference.toLowerCase(),
-          experience_level: goals.experience_level ?? "beginner",
+          experience_level: experienceToApi(goals.experience_level),
           selected_plant_slugs: selectedPlantSlugs,
           selected_cultivar_slugs: selectedCultivarSlugs,
           excluded_plant_slugs: [],
@@ -844,15 +844,6 @@ function LayoutScreen({
         <GardenMap property={property} garden={garden} layout={layout} />
         <GardenLayoutGrid layout={layout} title="Layout" />
       </div>
-      <div className="mt-2 text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
-    </button>
-  );
-}
-
-function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
-  return (
-    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <GardenLayoutGrid layout={layout} title="Layout" />
       <Card>
         <h2 className="mb-3 text-lg font-semibold">Layout Actions</h2>
         <p className="text-sm text-foreground/70">{layout.summary}</p>
@@ -1036,6 +1027,12 @@ function goalToApi(goal: string) {
     Combination: "combination"
   };
   return values[goal] ?? "combination";
+}
+
+function experienceToApi(value?: string | null) {
+  const normalized = (value ?? "beginner").toLowerCase();
+  if (normalized === "intermediate" || normalized === "advanced") return normalized;
+  return "beginner";
 }
 
 function recommendationGoals(goals: GardenGoals) {
