@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PlantSearchResult } from "@/types/api";
-import { dedupePlantResults, displayPlantResultName, selectionKeyForPlantResult } from "./plantSelection";
+import { dedupePlantResults, displayPlantResultName, recommendationTarget, selectionKeyForPlantResult } from "./plantSelection";
 
 function species(overrides: Partial<PlantSearchResult> = {}): PlantSearchResult {
   return {
@@ -65,5 +65,25 @@ describe("plantSelection helpers", () => {
 
   it("prefers the backend display name", () => {
     expect(displayPlantResultName(cultivar())).toBe("Tomato — Sungold");
+  });
+
+  it("creates a cultivar target for cultivar recommendations when cultivar rows are not loaded", () => {
+    const target = recommendationTarget(
+      {
+        plant_slug: "tomato",
+        plant_common_name: "Tomato",
+        cultivar_recommendations: [{ cultivar_slug: "tomato_sungold", cultivar_name: "Sungold", score: 30, reason_codes: [] }],
+        recommendation_type: "goal_fit",
+        score: 100,
+        score_breakdown: {},
+        reason_codes: [],
+        warnings: [],
+        explanation: "Good fit."
+      },
+      [species()]
+    );
+
+    expect(target?.result_type).toBe("cultivar");
+    expect(selectionKeyForPlantResult(target!)).toBe("cultivar:tomato_sungold");
   });
 });

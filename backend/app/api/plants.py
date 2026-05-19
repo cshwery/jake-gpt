@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,7 +23,7 @@ def search_plants(
     stmt = select(Plant).order_by(Plant.common_name)
     if q:
         stmt = stmt.where(Plant.common_name.ilike(f"%{q}%") | Plant.slug.ilike(f"%{q}%"))
-    plants = list(db.scalars(stmt).all())
+    plants = _dedupe_species(list(db.scalars(stmt).all()))
     results = [
         PlantSearchResult.model_validate(plant).model_copy(
             update={"result_type": "species", "plant_id": plant.id, "display_name": _title_case(plant.common_name)}
@@ -55,6 +57,20 @@ def search_plants(
                 )
             )
     return results
+
+
+def _dedupe_species(plants: list[Plant]) -> list[Plant]:
+    by_identity: dict[str, Plant] = {}
+    for plant in plants:
+        identity = _species_identity(plant)
+        existing = by_identity.get(identity)
+        if existing is None or (not existing.slug and plant.slug):
+            by_identity[identity] = plant
+    return sorted(by_identity.values(), key=lambda plant: _title_case(plant.common_name))
+
+
+def _species_identity(plant: Plant) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", (plant.slug or plant.common_name).strip().lower()).strip("_")
 
 
 @router.post("/suggest", response_model=list[PlantSuggestion])
