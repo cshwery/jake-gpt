@@ -455,19 +455,21 @@ def _projected_ring_area_sq_m(ring: list[list[float]]) -> float:
 
 
 def _polygon_centroid_lon_lat(ring: list[list[float]]) -> tuple[float, float]:
-    signed_area = _signed_area_lon_lat(ring)
+    origin_lon, origin_lat = ring[0][:2]
+    translated = [[point[0] - origin_lon, point[1] - origin_lat] for point in ring]
+    signed_area = _signed_area_lon_lat(translated)
     if signed_area == 0:
         points = ring[:-1]
         return sum(point[0] for point in points) / len(points), sum(point[1] for point in points) / len(points)
     cx = 0.0
     cy = 0.0
-    for index in range(len(ring) - 1):
-        lon1, lat1 = ring[index][:2]
-        lon2, lat2 = ring[index + 1][:2]
+    for index in range(len(translated) - 1):
+        lon1, lat1 = translated[index][:2]
+        lon2, lat2 = translated[index + 1][:2]
         cross = lon1 * lat2 - lon2 * lat1
         cx += (lon1 + lon2) * cross
         cy += (lat1 + lat2) * cross
-    return cx / (6 * signed_area), cy / (6 * signed_area)
+    return origin_lon + cx / (6 * signed_area), origin_lat + cy / (6 * signed_area)
 
 
 def _lon_to_m(lon: float, avg_lat_rad: float) -> float:

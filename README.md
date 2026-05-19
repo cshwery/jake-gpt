@@ -40,6 +40,8 @@ cp .env.example .env
 uv sync
 uv run alembic upgrade head
 uv run python -m app.seed.seed
+make import-plant-kb
+make import-companion-relationships
 uv run uvicorn app.main:app --reload
 ```
 

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import quote
-
-import httpx
+import json
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlencode
+from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
@@ -48,13 +49,13 @@ class MapboxGeocoder(Geocoder):
             "types": "address,place,postcode,locality,neighborhood",
         }
         try:
-            response = httpx.get(url, params=params, timeout=self.timeout_seconds)
-            response.raise_for_status()
-        except httpx.HTTPStatusError as exc:
-            raise GeocodingError(f"Mapbox geocoding failed with status {exc.response.status_code}.") from exc
-        except httpx.HTTPError as exc:
+            request = Request(f"{url}?{urlencode(params)}", headers={"User-Agent": "JakeGPT/0.1"})
+            with urlopen(request, timeout=self.timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise GeocodingError(f"Mapbox geocoding failed with status {exc.code}.") from exc
+        except (URLError, TimeoutError, OSError) as exc:
             raise GeocodingError("Mapbox geocoding request failed.") from exc
-        data = response.json()
         features = data.get("features") or []
         if not features:
             raise GeocodingError("No geocoding results found for that address.")

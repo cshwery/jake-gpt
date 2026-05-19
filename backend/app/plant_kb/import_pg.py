@@ -30,6 +30,7 @@ def import_from_sqlite(path: Path = DEFAULT_DB_PATH, db: Session | None = None) 
         "data_sources_upserted": 0,
     }
     try:
+        queued_legacy_pairs: set[tuple[int, int]] = set()
         plants_by_sqlite_id: dict[int, Plant] = {}
         for row in sqlite.execute("SELECT * FROM plants ORDER BY id"):
             values = _plant_values(row)
@@ -83,7 +84,7 @@ def import_from_sqlite(path: Path = DEFAULT_DB_PATH, db: Session | None = None) 
             else:
                 for key, value in values.items():
                     setattr(rel, key, value)
-            _upsert_legacy_companion(session, values)
+            _upsert_legacy_companion(session, values, queued_legacy_pairs)
             summary["companion_relationships_upserted"] += 1
         for row in sqlite.execute("SELECT * FROM planting_rules ORDER BY id"):
             values = _row_values(row, exclude={"id", "plant_id", "cultivar_id"})
@@ -187,19 +188,24 @@ def _nullable_eq(column: Any, value: Any) -> Any:
     return column.is_(None) if value is None else column == value
 
 
-def _upsert_legacy_companion(session: Session, values: dict[str, Any]) -> None:
+def _upsert_legacy_companion(session: Session, values: dict[str, Any], queued_pairs: set[tuple[int, int]] | None = None) -> None:
+    pair = (values["source_plant_id"], values["target_plant_id"])
+    if queued_pairs is not None and pair in queued_pairs:
+        return
     existing = session.scalar(
         select(PlantCompanion).where(
-            PlantCompanion.plant_id == values["source_plant_id"],
-            PlantCompanion.companion_plant_id == values["target_plant_id"],
+            PlantCompanion.plant_id == pair[0],
+            PlantCompanion.companion_plant_id == pair[1],
         )
     )
     notes = values["rationale"]
     if existing is None:
+        if queued_pairs is not None:
+            queued_pairs.add(pair)
         session.add(
             PlantCompanion(
-                plant_id=values["source_plant_id"],
-                companion_plant_id=values["target_plant_id"],
+                plant_id=pair[0],
+                companion_plant_id=pair[1],
                 relationship_type=values["relationship_type"],
                 notes=notes,
             )
