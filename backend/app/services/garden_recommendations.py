@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -21,10 +21,19 @@ class GardenGoalInput(BaseModel):
     primary_goal: GoalValue | None = None
     maintenance_preference: MaintenanceValue = "moderate"
     experience_level: ExperienceLevel = "beginner"
+    planting_style: Literal["rows", "intensive_grid", "raised_beds", "mixed"] = "rows"
+    using_raised_beds: bool | None = None
+    raised_beds: dict[str, Any] | None = None
+    can_start_seeds_indoors: bool | None = None
+    prefers_buying_starts: bool | None = None
+    direct_sow_preference: Literal["direct_sow_when_reasonable", "prefer_transplants", "no_preference"] | None = None
     desired_plant_slugs: list[str] = Field(default_factory=list)
     desired_cultivar_slugs: list[str] = Field(default_factory=list)
     excluded_plant_slugs: list[str] = Field(default_factory=list)
     notes: str | None = None
+
+
+GardenGoalInput.model_rebuild()
 
 
 class ScoreBreakdown(BaseModel):

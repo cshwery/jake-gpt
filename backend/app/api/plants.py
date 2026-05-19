@@ -24,7 +24,7 @@ def search_plants(
     plants = list(db.scalars(stmt).all())
     results = [
         PlantSearchResult.model_validate(plant).model_copy(
-            update={"result_type": "species", "plant_id": plant.id, "display_name": plant.common_name}
+            update={"result_type": "species", "plant_id": plant.id, "display_name": _title_case(plant.common_name)}
         )
         for plant in plants
     ]
@@ -49,7 +49,7 @@ def search_plants(
                         "cultivar_id": cultivar.id,
                         "cultivar_slug": cultivar.slug,
                         "cultivar_name": cultivar.cultivar_name,
-                        "display_name": f"{plant.common_name} > {cultivar.cultivar_name}",
+                        "display_name": f"{_title_case(plant.common_name)} — {cultivar.cultivar_name}",
                         "cultivar_notes": cultivar.notes,
                     }
                 )
@@ -133,3 +133,7 @@ def _legacy_maintenance(value: str) -> str:
     if normalized == "low":
         return "low"
     return "moderate"
+
+
+def _title_case(value: str) -> str:
+    return " ".join(part.capitalize() for part in value.split())

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.models import Garden, GardenContext, GardenLayout, LayoutPlacement, Plant, PlantCultivar
 from app.services.companions import CompanionGraphService
 from app.services.garden_recommendations import GardenRecommendationResult
+from app.services.garden_area import area_category
 from app.services.layout.grid_builder import GridBuilder
 from app.services.layout.layout_explanation_builder import LayoutExplanationBuilder
 from app.services.layout.layout_schemas import LayoutCandidate, LayoutOptions, LayoutResult, LayoutScoreBreakdown
@@ -44,7 +45,7 @@ class LayoutEngine:
             recommendation_result=recommendation_result,
             options=options,
         )
-        return self.select_best_layout(candidates, garden_id=garden.id)
+        return self.select_best_layout(candidates, garden=garden, garden_context=garden_context)
 
     def generate_candidate_layouts(
         self,
@@ -109,13 +110,18 @@ class LayoutEngine:
             garden_context=garden_context,
         )
 
-    def select_best_layout(self, candidates: list[LayoutCandidate], garden_id: int | None = None) -> LayoutResult:
+    def select_best_layout(self, candidates: list[LayoutCandidate], garden: Garden | None = None, garden_id: int | None = None, garden_context: GardenContext | Any | None = None) -> LayoutResult:
         if not candidates:
             raise ValueError("At least one layout candidate is required.")
         best = sorted(candidates, key=lambda candidate: (-candidate.score_breakdown.total_score, candidate.name))[0]
+        area_sq_ft = _area_sq_ft(garden, garden_context)
+        grid_area_sq_ft = (best.grid.rows * best.grid.cols) * (best.grid.cell_size_ft ** 2)
         return LayoutResult(
-            garden_id=garden_id,
+            garden_id=garden_id or getattr(garden, "id", None),
             summary=f"LayoutEngine v1 selected the {best.name.replace('_', ' ')} candidate with score {best.score_breakdown.total_score:.1f}.",
+            area_sq_ft=area_sq_ft or None,
+            area_category=area_category(area_sq_ft) if area_sq_ft else None,
+            approximate_dimensions_ft={"width": round(best.grid.cols * best.grid.cell_size_ft, 1), "height": round(best.grid.rows * best.grid.cell_size_ft, 1), "grid_area_sq_ft": round(grid_area_sq_ft, 1)},
             grid=best.grid,
             placements=best.placements,
             paths=best.paths,
@@ -204,3 +210,15 @@ def _sunlight(garden_context: GardenContext | Any | None) -> str | None:
     if isinstance(garden_context, dict):
         return garden_context.get("sunlight", {}).get("category") or garden_context.get("sunlight_category")
     return None
+
+
+def _area_sq_ft(garden: Garden | None, garden_context: GardenContext | Any | None) -> float:
+    if garden_context is not None:
+        if hasattr(garden_context, "area_sq_ft"):
+            return float(getattr(garden_context, "area_sq_ft", 0) or 0)
+        geometry = getattr(garden_context, "geometry", None)
+        if geometry is not None:
+            return float(getattr(geometry, "area_sq_ft", 0) or 0)
+        if isinstance(garden_context, dict):
+            return float(garden_context.get("geometry", {}).get("area_sq_ft", 0) or garden_context.get("area_sq_ft", 0) or 0)
+    return float(getattr(garden, "area_sq_ft", 0) or 0)

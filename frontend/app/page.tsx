@@ -1,16 +1,19 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
-import { Leaf, MapPin, Save, Sprout } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { MapPin, Save, Sprout } from "lucide-react";
 import { ApiClient } from "@/lib/api";
 import { GardenMap } from "@/components/GardenMap";
+import { GardenLayoutGrid } from "@/components/GardenLayoutGrid";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, GeocodeResult, LayoutResult, PlantRead, PlantSuggestion, PropertyRead } from "@/types/api";
-import { areaCategory, areaWarning } from "@/lib/product";
+import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, GeocodeResult, LayoutResult, PlantSearchResult, PropertyRead } from "@/types/api";
+import { areaCategory, areaWarning, displayCultivarName, displayPlantName, fitLabel, layoutQualityLabel, recommendationLabel, recommendationReasonLabel, subscoreLabel } from "@/lib/product";
 
-type Step = "login" | "address" | "map" | "context" | "plants" | "layout" | "plan";
+type Step = "login" | "address" | "map" | "context" | "setup" | "plants" | "layout" | "plan";
+
+type SelectedPlantItem = PlantSearchResult & { selection_key: string };
 
 export default function Home() {
   const [step, setStep] = useState<Step>("login");
@@ -22,15 +25,54 @@ export default function Home() {
   const [draftPolygon, setDraftPolygon] = useState<GeoJSON.Polygon | null>(null);
   const [draftAreaSqM, setDraftAreaSqM] = useState<number | null>(null);
   const [context, setContext] = useState<GardenContextRead | null>(null);
-  const [plants, setPlants] = useState<PlantRead[]>([]);
-  const [suggestions, setSuggestions] = useState<PlantSuggestion[]>([]);
+  const [plantQuery, setPlantQuery] = useState<string>("");
+  const [plantResults, setPlantResults] = useState<PlantSearchResult[]>([]);
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [goals, setGoals] = useState<GardenGoals>({ goal: "Food", maintenance_preference: "Moderate", sunlight: "Full Sun", free_text_preferences: "" });
+  const [selectedPlants, setSelectedPlants] = useState<SelectedPlantItem[]>([]);
+  const [goals, setGoals] = useState<GardenGoals>({
+    goal: "Food",
+    goals: ["food"],
+    maintenance_preference: "Moderate",
+    experience_level: "beginner",
+    sunlight: "Full Sun",
+    free_text_preferences: "",
+    planting_style: "rows",
+    using_raised_beds: false,
+    raised_beds: null,
+    can_start_seeds_indoors: null,
+    prefers_buying_starts: null,
+    direct_sow_preference: "no_preference"
+  });
   const [layout, setLayout] = useState<LayoutResult | null>(null);
   const [plan, setPlan] = useState<GeneratedPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const api = useMemo(() => new ApiClient(token), [token]);
+  const selectedPlantIds = useMemo(
+    () => uniqueNumbers(selectedPlants.map((item) => item.plant_id).filter((value): value is number => typeof value === "number")),
+    [selectedPlants]
+  );
+  const selectedPlantSlugs = useMemo(() => uniqueStrings(selectedPlants.filter((item) => item.result_type === "species").map((item) => item.slug).filter(Boolean) as string[]), [selectedPlants]);
+  const selectedCultivarSlugs = useMemo(() => uniqueStrings(selectedPlants.map((item) => item.cultivar_slug).filter(Boolean) as string[]), [selectedPlants]);
+
+  useEffect(() => {
+    if (step !== "plants") return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const query = plantQuery.trim();
+        const result = await api.request<PlantSearchResult[]>(query ? `/plants?q=${encodeURIComponent(query)}` : "/plants");
+        if (active) setPlantResults(result);
+      } catch (err) {
+        if (active) {
+          setError(err instanceof Error ? err.message : "Plant load failed");
+        }
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [api, plantQuery, step]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -142,11 +184,16 @@ export default function Home() {
     }
   }
 
+  async function continueToSetup() {
+    setStep("setup");
+  }
+
   async function continueToPlants() {
     setError(null);
     try {
-      const allPlants = await api.request<PlantRead[]>("/plants");
-      setPlants(allPlants);
+      const allPlants = await api.request<PlantSearchResult[]>("/plants");
+      setPlantResults(allPlants);
+      setPlantQuery("");
       setStep("plants");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Plant load failed");
@@ -155,7 +202,7 @@ export default function Home() {
 
   async function loadSuggestions() {
     if (!garden) return;
-    const selectedSlugs = plants.filter((plant) => selectedIds.includes(plant.id)).map((plant) => plant.slug).filter(Boolean) as string[];
+    const selectedSlugs = selectedPlantSlugs;
     const result = await api.request<GardenRecommendationResult>(`/gardens/${garden.id}/recommendations/generate`, {
       method: "POST",
       body: JSON.stringify({
@@ -164,7 +211,7 @@ export default function Home() {
         maintenance_preference: goals.maintenance_preference.toLowerCase(),
         experience_level: goals.experience_level ?? "beginner",
         selected_plant_slugs: selectedSlugs,
-        selected_cultivar_slugs: [],
+        selected_cultivar_slugs: selectedCultivarSlugs,
         excluded_plant_slugs: [],
         limit: 25,
         include_excluded: false,
@@ -172,16 +219,18 @@ export default function Home() {
       })
     });
     setRecommendations(result);
-    setSuggestions([]);
   }
 
   async function generatePlan() {
     if (!garden) return;
     setError(null);
     try {
+      if (!layout) {
+        await generateLayout("plan", false);
+      }
       const generated = await api.request<GeneratedPlan>("/plans/generate", {
         method: "POST",
-        body: JSON.stringify({ garden_id: garden.id, selected_plant_ids: selectedIds, goals })
+        body: JSON.stringify({ garden_id: garden.id, selected_plant_ids: selectedPlantIds, goals })
       });
       setPlan(generated);
       setStep("plan");
@@ -190,25 +239,26 @@ export default function Home() {
     }
   }
 
-  async function generateLayout() {
+  async function generateLayout(nextStep: Step = "layout", persistSelection = true) {
     if (!garden) return;
     setError(null);
     try {
-      const selectedSlugs = plants.filter((plant) => selectedIds.includes(plant.id)).map((plant) => plant.slug).filter(Boolean) as string[];
       const generated = await api.request<LayoutResult>(`/gardens/${garden.id}/layouts/generate`, {
         method: "POST",
         body: JSON.stringify({
-          selected_plant_slugs: selectedSlugs,
-          selected_cultivar_slugs: [],
-          accepted_recommendation_slugs: [],
-          accepted_cultivar_slugs: [],
+          selected_plant_slugs: selectedPlantSlugs,
+          selected_cultivar_slugs: selectedCultivarSlugs,
+          accepted_recommendation_slugs: selectedPlantSlugs,
+          accepted_cultivar_slugs: selectedCultivarSlugs,
           options: { cell_size_ft: 2, include_paths: true, layout_style: "grid", max_candidates: 10, persist: true }
         })
       });
       setLayout(generated);
-      setStep("layout");
+      if (persistSelection) setStep(nextStep);
+      return generated;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Layout generation failed");
+      throw err;
     }
   }
 
@@ -219,6 +269,17 @@ export default function Home() {
       body: JSON.stringify({ generated_plan: plan })
     });
     setPlan(saved);
+  }
+
+  function toggleSelection(item: PlantSearchResult) {
+    setSelectedPlants((current) => {
+      const key = selectionKeyForResult(item);
+      const existing = current.find((entry) => entry.selection_key === key);
+      if (existing) {
+        return current.filter((entry) => entry.selection_key !== key);
+      }
+      return [...current, { ...item, selection_key: key }];
+    });
   }
 
   return (
@@ -269,38 +330,32 @@ export default function Home() {
               {garden ? (
                 <div className="space-y-2 text-sm">
                   <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3">Saved backend area: {garden.area_sq_ft.toFixed(0)} sq ft</div>
-                  <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue</Button>
+                  <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue to Garden Context</Button>
                 </div>
               ) : null}
             </Card>
           </div>
         ) : null}
-        {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToPlants} /> : null}
+        {step === "context" && garden ? <ContextForm garden={garden} context={context} goals={goals} setGoals={setGoals} onSave={saveContext} onRecalculate={recalculateContext} onSunlightChange={updateSunlight} onContinue={continueToSetup} /> : null}
+        {step === "setup" ? <GoalsSetupForm goals={goals} setGoals={setGoals} onContinue={continueToPlants} /> : null}
         {step === "plants" ? (
-          <PlantSelection plants={plants} suggestions={suggestions} recommendations={recommendations} selectedIds={selectedIds} setSelectedIds={setSelectedIds} goals={goals} setGoals={setGoals} loadSuggestions={loadSuggestions} generateLayout={generateLayout} />
+          <PlantSelection
+            plantResults={plantResults}
+            plantQuery={plantQuery}
+            setPlantQuery={setPlantQuery}
+            selectedPlants={selectedPlants}
+            onToggleSelection={toggleSelection}
+            recommendations={recommendations}
+            goals={goals}
+            loadSuggestions={loadSuggestions}
+            generateLayout={() => generateLayout("layout")}
+          />
         ) : null}
         {step === "layout" && layout ? (
-          <LayoutScreen layout={layout} onRegenerate={generateLayout} onContinue={generatePlan} onBack={() => setStep("plants")} />
+          <LayoutScreen layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
-        {step === "plan" && property && garden && plan ? (
-          <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-            <GardenMap property={property} garden={garden} generatedPlan={plan} dimmed />
-            <Card>
-              <h2 className="mb-3 text-lg font-semibold">Generated Plan</h2>
-              <p className="text-sm text-foreground/70">{plan.summary}</p>
-              <div className="mt-4 space-y-2 text-sm">
-                {plan.items.map((item) => <div key={`${item.plant_id}-${item.row}-${item.col}`}>{item.label}: {item.quantity} plantings</div>)}
-              </div>
-              <div className="mt-4 space-y-2 text-sm text-foreground/70">
-                {plan.companion_notes.map((note) => <div key={note}>{note}</div>)}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-2">
-                <Button onClick={savePlan}><Save className="mr-2 h-4 w-4" />Save Plan</Button>
-                <Button className="bg-accent text-foreground" onClick={generatePlan}>Regenerate</Button>
-                <Button className="bg-muted text-foreground" onClick={() => setStep("plants")}>Back to Plant Selection</Button>
-              </div>
-            </Card>
-          </div>
+        {step === "plan" && property && garden && plan && layout ? (
+          <PlanScreen layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
         ) : null}
       </section>
     </main>
@@ -412,7 +467,7 @@ function ContextForm({
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button onClick={context ? onRecalculate : onSave}>{context ? "Recalculate Context" : "Calculate Context"}</Button>
-        {context ? <Button className="bg-accent text-foreground" onClick={onContinue}>Continue to Plants</Button> : null}
+        {context ? <Button className="bg-accent text-foreground" onClick={onContinue}>Continue to Goals & Setup</Button> : null}
       </div>
     </Card>
   );
@@ -447,7 +502,8 @@ function sunlightToApi(value: string) {
     "Full Sun": "full_sun",
     "Part Sun": "part_sun",
     "Part Shade": "part_shade",
-    Shade: "shade"
+    Shade: "shade",
+    "I am not sure": "unknown"
   };
   return values[value] ?? "unknown";
 }
@@ -458,9 +514,9 @@ function apiToGoalSunlight(value: string) {
     part_sun: "Part Sun",
     part_shade: "Part Shade",
     shade: "Shade",
-    unknown: "Part Sun"
+    unknown: "I am not sure"
   };
-  return values[value] ?? "Part Sun";
+  return values[value] ?? "I am not sure";
 }
 
 function sunlightLabel(value?: string | null) {
@@ -489,137 +545,278 @@ function formatDate(value: string) {
   return new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric" }).format(new Date(`${value}T12:00:00`));
 }
 
-function PlantSelection(props: {
-  plants: PlantRead[];
-  suggestions: PlantSuggestion[];
-  recommendations: GardenRecommendationResult | null;
-  selectedIds: number[];
-  setSelectedIds: (ids: number[]) => void;
+function GoalsSetupForm({
+  goals,
+  setGoals,
+  onContinue
+}: {
   goals: GardenGoals;
   setGoals: (goals: GardenGoals) => void;
-  loadSuggestions: () => void;
-  generateLayout: () => void;
+  onContinue: () => void;
 }) {
-  const toggle = (id: number) => props.setSelectedIds(props.selectedIds.includes(id) ? props.selectedIds.filter((item) => item !== id) : [...props.selectedIds, id]);
+  const usingRaisedBeds = goals.using_raised_beds === true;
+  const plantingStyle = goals.planting_style ?? "rows";
   return (
-    <div className="grid gap-5 lg:grid-cols-[320px_1fr]">
+    <div className="mx-auto max-w-4xl space-y-5">
       <Card>
-        <h2 className="mb-3 text-lg font-semibold">Goals</h2>
-        <label className="mb-3 block text-sm">Garden goal
-          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.goal} onChange={(event) => props.setGoals({ ...props.goals, goal: event.target.value })}>
-            {["Food", "Flowers", "Shade", "Pollinators", "Herbs", "Fruit", "Native plants", "Combination"].map((value) => <option key={value}>{value}</option>)}
-          </select>
-        </label>
-        <label className="mb-3 block text-sm">Maintenance
-          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.maintenance_preference} onChange={(event) => props.setGoals({ ...props.goals, maintenance_preference: event.target.value })}>
-            {["Low", "Moderate", "High"].map((value) => <option key={value}>{value}</option>)}
-          </select>
-        </label>
-        <label className="mb-3 block text-sm">Experience
-          <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={props.goals.experience_level ?? "beginner"} onChange={(event) => props.setGoals({ ...props.goals, experience_level: event.target.value })}>
-            <option value="beginner">Beginner</option>
-            <option value="intermediate">Intermediate</option>
-            <option value="advanced">Advanced</option>
-          </select>
-        </label>
-        <label className="mb-3 block text-sm">Preferences
-          <textarea className="mt-1 min-h-24 w-full rounded-md border border-border p-3" value={props.goals.free_text_preferences ?? ""} onChange={(event) => props.setGoals({ ...props.goals, free_text_preferences: event.target.value })} />
-        </label>
-        <Button className="mb-2 w-full" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Generate Recommendations</Button>
-        <Button className="w-full" disabled={props.selectedIds.length === 0} onClick={props.generateLayout}>Generate Layout</Button>
-      </Card>
-      <Card>
-        <h2 className="mb-3 text-lg font-semibold">Plants</h2>
-        {props.recommendations ? (
-          <div className="mb-4 space-y-3">
-            <div className="rounded-md border border-border bg-muted/40 p-3 text-sm">{props.recommendations.summary}</div>
-            {props.recommendations.warnings.length ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-                {props.recommendations.warnings.map((warning) => <div key={`${warning.warning_type}-${warning.plant_slugs.join("-")}`}>{warning.message}</div>)}
-              </div>
-            ) : null}
-            <div className="grid gap-3 lg:grid-cols-2">
-              {props.recommendations.recommendations.slice(0, 8).map((item) => {
-                const plant = props.plants.find((candidate) => candidate.slug === item.plant_slug);
-                return (
-                  <div key={item.plant_slug} className="rounded-md border border-border bg-white p-3 text-sm">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <div className="font-semibold">{item.plant_common_name}</div>
-                        <div className="text-xs text-foreground/60">{item.recommendation_type.replaceAll("_", " ")} · score {item.score.toFixed(1)}</div>
-                      </div>
-                      {plant ? (
-                        <Button className="h-8 px-3 text-xs" onClick={() => props.setSelectedIds(props.selectedIds.includes(plant.id) ? props.selectedIds : [...props.selectedIds, plant.id])}>Add</Button>
-                      ) : null}
-                    </div>
-                    <p className="mt-2 text-foreground/70">{item.explanation}</p>
-                    {item.cultivar_recommendations.length ? (
-                      <div className="mt-2 text-xs text-foreground/60">Cultivars: {item.cultivar_recommendations.map((cultivar) => cultivar.cultivar_name).join(", ")}</div>
-                    ) : null}
-                    {item.warnings.length ? (
-                      <div className="mt-2 text-xs text-amber-700">{item.warnings.join(" ")}</div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-            {props.recommendations.assumptions.length ? (
-              <div className="rounded-md border border-border bg-muted/40 p-3 text-xs text-foreground/70">
-                {props.recommendations.assumptions.join(" ")}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-        {props.suggestions.length ? (
-          <div className="mb-4 rounded-md bg-muted p-3 text-sm">
-            Suggested: {props.suggestions.map((item) => item.plant.common_name).join(", ")}
-          </div>
-        ) : null}
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {props.plants.map((plant) => (
-            <button key={plant.id} onClick={() => toggle(plant.id)} className={`rounded-md border p-3 text-left text-sm ${props.selectedIds.includes(plant.id) ? "border-primary bg-primary/10" : "border-border bg-white"}`}>
-              <div className="font-semibold"><Leaf className="mr-1 inline h-4 w-4" />{plant.common_name}</div>
-              <div className="text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
-            </button>
-          ))}
+        <h2 className="mb-2 text-lg font-semibold">Goals & Setup</h2>
+        <p className="mb-4 text-sm text-foreground/70">Tell JakeGPT how you want to use the garden before you choose plants.</p>
+        <div className="grid gap-4 md:grid-cols-2">
+          <LabelSelect label="What is your main goal?" value={goals.goal} onChange={(value) => setGoals({ ...goals, goal: value, goals: recommendationGoals({ ...goals, goal: value }) })} options={["Food", "Flowers", "Shade", "Pollinators", "Herbs", "Fruit", "Native plants", "Combination"]} />
+          <LabelSelect label="Maintenance preference" value={goals.maintenance_preference} onChange={(value) => setGoals({ ...goals, maintenance_preference: value })} options={["Low", "Moderate", "High"]} />
+          <LabelSelect label="Experience" value={goals.experience_level ?? "beginner"} onChange={(value) => setGoals({ ...goals, experience_level: value })} options={["Beginner", "Intermediate", "Advanced"]} />
+          <LabelSelect label="Are you planting in raised beds?" value={goals.using_raised_beds === true ? "Yes" : goals.using_raised_beds === false ? "No" : "Not sure"} onChange={(value) => setGoals({ ...goals, using_raised_beds: value === "Yes" ? true : value === "No" ? false : null, planting_style: value === "Yes" ? "raised_beds" : plantingStyle === "raised_beds" ? "rows" : plantingStyle })} options={["Yes", "No", "Not sure"]} />
+          {goals.using_raised_beds !== true ? (
+            <LabelSelect
+              label="Would you like JakeGPT to lay this out in rows?"
+              value={plantingStyle === "rows" ? "Yes" : "No"}
+              onChange={(value) => setGoals({ ...goals, planting_style: value === "Yes" ? "rows" : "mixed" })}
+              options={["Yes", "No"]}
+            />
+          ) : null}
+          <LabelSelect
+            label="Can you start seeds indoors?"
+            value={goals.can_start_seeds_indoors === true ? "Yes" : goals.can_start_seeds_indoors === false ? "No" : "Not sure"}
+            onChange={(value) => setGoals({ ...goals, can_start_seeds_indoors: value === "Yes" ? true : value === "No" ? false : null })}
+            options={["Yes", "No", "Not sure"]}
+          />
+          <LabelSelect
+            label="Do you prefer buying plant starts when a plant is hard to direct sow?"
+            value={goals.prefers_buying_starts === true ? "Yes" : goals.prefers_buying_starts === false ? "No" : "No preference"}
+            onChange={(value) => setGoals({ ...goals, prefers_buying_starts: value === "Yes" ? true : value === "No" ? false : null })}
+            options={["Yes", "No", "No preference"]}
+          />
+          <LabelSelect
+            label="Direct sow preference"
+            value={goals.direct_sow_preference ?? "no_preference"}
+            onChange={(value) => setGoals({ ...goals, direct_sow_preference: value as GardenGoals["direct_sow_preference"] })}
+            options={["direct_sow_when_reasonable", "prefer_transplants", "no_preference"]}
+            displayOptions={["Direct sow when reasonable", "Prefer transplants", "No preference"]}
+          />
         </div>
+        <label className="mt-4 block text-sm">
+          Preferences
+          <textarea
+            className="mt-1 min-h-28 w-full rounded-md border border-border p-3 text-sm"
+            placeholder="I want to have some food each week rather than one big harvest"
+            value={goals.free_text_preferences ?? ""}
+            onChange={(event) => setGoals({ ...goals, free_text_preferences: event.target.value })}
+          />
+        </label>
       </Card>
+
+      {usingRaisedBeds ? (
+        <Card>
+          <h3 className="mb-2 text-base font-semibold">Raised bed setup</h3>
+          <p className="mb-4 text-sm text-foreground/70">Future versions will let you drag raised-bed shapes onto the map. For now, JakeGPT will use these dimensions to guide layout.</p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <NumberField label="Number of beds" value={goals.raised_beds?.number_of_beds ?? null} onChange={(value) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), number_of_beds: value } })} />
+            <LabelSelect
+              label="Bed shape"
+              value={(goals.raised_beds?.bed_shape ?? "rectangle") as string}
+              onChange={(value) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), bed_shape: value as "rectangle" | "square" | "custom" } })}
+              options={["rectangle", "square", "custom"]}
+            />
+            <NumberField label="Bed length (ft)" value={goals.raised_beds?.bed_length_ft ?? null} onChange={(value) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), bed_length_ft: value } })} />
+            <NumberField label="Bed width (ft)" value={goals.raised_beds?.bed_width_ft ?? null} onChange={(value) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), bed_width_ft: value } })} />
+            <NumberField label="Bed area (sq ft)" value={goals.raised_beds?.bed_area_sq_ft ?? null} onChange={(value) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), bed_area_sq_ft: value } })} />
+            <label className="block text-sm">
+              Notes
+              <textarea
+                className="mt-1 min-h-20 w-full rounded-md border border-border p-3 text-sm"
+                placeholder="Any notes about the beds"
+                value={goals.raised_beds?.notes ?? ""}
+                onChange={(event) => setGoals({ ...goals, raised_beds: { ...(goals.raised_beds ?? {}), notes: event.target.value } })}
+              />
+            </label>
+          </div>
+        </Card>
+      ) : null}
+
+      <div className="flex justify-end">
+        <Button onClick={onContinue}>Continue to Plant Selection</Button>
+      </div>
     </div>
   );
 }
 
+function PlantSelection(props: {
+  plantResults: PlantSearchResult[];
+  plantQuery: string;
+  setPlantQuery: (query: string) => void;
+  selectedPlants: SelectedPlantItem[];
+  onToggleSelection: (plant: PlantSearchResult) => void;
+  recommendations: GardenRecommendationResult | null;
+  goals: GardenGoals;
+  loadSuggestions: () => void;
+  generateLayout: () => Promise<LayoutResult | void>;
+}) {
+  const selectedKeys = new Set(props.selectedPlants.map((item) => item.selection_key));
+  const species = props.plantResults.filter((item) => item.result_type === "species");
+  const cultivars = props.plantResults.filter((item) => item.result_type === "cultivar");
+  const recommendationCards = props.recommendations?.recommendations.slice(0, 8) ?? [];
+  return (
+    <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+      <div className="space-y-5">
+        <Card>
+          <h2 className="mb-2 text-lg font-semibold">Search plants</h2>
+          <p className="mb-4 text-sm text-foreground/70">Search species and cultivars. Cultivar names appear under their parent species.</p>
+          <div className="flex gap-2">
+            <Input value={props.plantQuery} onChange={(event) => props.setPlantQuery(event.target.value)} placeholder="Search tomato, basil, Sungold..." />
+            <Button className="shrink-0" onClick={props.loadSuggestions}><Sprout className="mr-2 h-4 w-4" />Generate Recommendations</Button>
+          </div>
+        </Card>
+
+        {props.recommendations ? (
+          <Card>
+            <h3 className="mb-3 text-lg font-semibold">Recommendations</h3>
+            <p className="mb-4 text-sm text-foreground/70">{props.recommendations.summary}</p>
+            {props.recommendations.warnings.length ? (
+              <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                {props.recommendations.warnings.map((warning) => (
+                  <div key={`${warning.warning_type}-${warning.plant_slugs.join("-")}`}>{warning.message}</div>
+                ))}
+              </div>
+            ) : null}
+            <div className="grid gap-3 lg:grid-cols-2">
+              {recommendationCards.map((item) => {
+                const selectionKey = recommendationSelectionKey(item.plant_slug, item.cultivar_recommendations[0]?.cultivar_slug ?? null);
+                const selected = selectedKeys.has(selectionKey);
+                const targetPlant = recommendationTarget(item, props.plantResults);
+                return (
+                  <div key={`${item.plant_slug}-${item.cultivar_recommendations[0]?.cultivar_slug ?? "species"}`} className="rounded-md border border-border bg-white p-3 text-sm">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{displayRecommendationName(item.plant_common_name, item.cultivar_recommendations[0]?.cultivar_name)}</div>
+                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-foreground/60">
+                          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5">{recommendationLabel(item.recommendation_type)}</span>
+                          <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5">{fitLabel(item.score)}</span>
+                        </div>
+                      </div>
+                      <Button
+                        className={selected ? "h-8 bg-emerald-600 px-3 text-xs text-white" : "h-8 px-3 text-xs"}
+                        onClick={() => targetPlant ? props.onToggleSelection(targetPlant) : undefined}
+                      >
+                        {selected ? "Added ✓" : "Add"}
+                      </Button>
+                    </div>
+                    <div className="mt-2 space-y-1 text-foreground/70">
+                      <div>{item.explanation}</div>
+                      <ul className="list-inside list-disc text-xs">
+                        {recommendationReasons(item.reason_codes, item.explanation).map((reason) => <li key={reason}>{reason}</li>)}
+                      </ul>
+                    </div>
+                    {item.warnings.length ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{item.warnings.join(" ")}</div> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+        ) : null}
+
+        <Card>
+          <h3 className="mb-3 text-lg font-semibold">Species</h3>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {species.map((plant) => (
+              <PlantCard key={selectionKeyForResult(plant)} plant={plant} selected={selectedKeys.has(selectionKeyForResult(plant))} onToggle={props.onToggleSelection} />
+            ))}
+          </div>
+        </Card>
+
+        {cultivars.length ? (
+          <Card>
+            <h3 className="mb-3 text-lg font-semibold">Cultivars</h3>
+            <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+              {cultivars.map((plant) => (
+                <PlantCard key={selectionKeyForResult(plant)} plant={plant} selected={selectedKeys.has(selectionKeyForResult(plant))} onToggle={props.onToggleSelection} />
+              ))}
+            </div>
+          </Card>
+        ) : null}
+      </div>
+
+      <div className="space-y-4">
+        <SelectedPlantsTray selectedPlants={props.selectedPlants} onToggleSelection={props.onToggleSelection} />
+        <Card>
+          <h3 className="mb-3 text-lg font-semibold">Next steps</h3>
+          <div className="space-y-2 text-sm text-foreground/70">
+            <div>Selected plants: {props.selectedPlants.length}</div>
+            <div>Goal: {props.goals.goal}</div>
+            <div>Planting style: {props.goals.planting_style ?? "rows"}</div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button className="w-full" disabled={props.selectedPlants.length === 0} onClick={props.generateLayout}>Generate Layout</Button>
+          </div>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function SelectedPlantsTray({
+  selectedPlants,
+  onToggleSelection
+}: {
+  selectedPlants: SelectedPlantItem[];
+  onToggleSelection: (plant: PlantSearchResult) => void;
+}) {
+  return (
+    <Card className="sticky top-4">
+      <h3 className="mb-2 text-lg font-semibold">Selected for your garden</h3>
+      <div className="mb-4 text-sm text-foreground/70">Selected plants: {selectedPlants.length}</div>
+      <div className="space-y-2">
+        {selectedPlants.length ? selectedPlants.map((item) => (
+          <div key={item.selection_key} className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+            <div>
+              <div className="font-medium">{displayResultLabel(item)}</div>
+              <div className="text-xs text-foreground/60">{item.result_type === "cultivar" ? "Cultivar" : "Species"}</div>
+            </div>
+            <Button className="h-8 px-3 text-xs bg-muted text-foreground" onClick={() => onToggleSelection(item)}>Remove</Button>
+          </div>
+        )) : <div className="text-sm text-foreground/60">Nothing selected yet.</div>}
+      </div>
+    </Card>
+  );
+}
+
+function PlantCard({ plant, selected, onToggle }: { plant: PlantSearchResult; selected: boolean; onToggle: (plant: PlantSearchResult) => void }) {
+  return (
+    <button
+      onClick={() => onToggle(plant)}
+      className={`rounded-md border p-3 text-left text-sm transition-colors ${selected ? "border-emerald-500 bg-emerald-50" : "border-border bg-white hover:border-primary/50"}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="font-semibold">{displayResultLabel(plant)}</div>
+          <div className="mt-1 text-xs text-foreground/60">{plant.result_type === "cultivar" ? "Cultivar" : "Species"}</div>
+        </div>
+        <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs">{selected ? "Added ✓" : "Add"}</span>
+      </div>
+      <div className="mt-2 text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
+    </button>
+  );
+}
+
 function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: LayoutResult; onRegenerate: () => void; onContinue: () => void; onBack: () => void }) {
-  const cellsById = new Map(layout.grid.cells.map((cell) => [cell.cell_id, cell]));
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-      <div className="rounded-md border border-border bg-white p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-lg font-semibold">Layout</h2>
-          <div className="text-sm text-foreground/60">Score {(layout.score_breakdown.total_score ?? 0).toFixed(1)}</div>
-        </div>
-        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${layout.grid.cols}, minmax(0, 1fr))` }}>
-          {layout.grid.cells.map((cell) => (
-            <div key={cell.cell_id} className={`flex min-h-16 flex-col justify-between rounded-sm border p-2 text-xs ${cell.is_path ? "border-stone-300 bg-stone-100 text-stone-600" : cell.plant_slug ? "border-primary/40 bg-primary/10" : "border-border bg-muted/30"}`}>
-              <span className="font-semibold">{cell.cell_id}</span>
-              <span>{cell.is_path ? "Path" : cell.label ?? ""}</span>
-            </div>
-          ))}
-        </div>
-      </div>
+      <GardenLayoutGrid layout={layout} title="Layout" />
       <Card>
-        <h2 className="mb-3 text-lg font-semibold">Layout Details</h2>
+        <h2 className="mb-3 text-lg font-semibold">Layout Actions</h2>
         <p className="text-sm text-foreground/70">{layout.summary}</p>
-        <div className="mt-4 space-y-2 text-sm">
-          {layout.placements.map((placement) => (
-            <div key={`${placement.plant_slug}-${placement.grid_cells.join("-")}`}>
-              {placement.plant_common_name}: {placement.quantity} in {placement.grid_cells.filter((cellId) => cellsById.has(cellId)).join(", ")}
-            </div>
-          ))}
+        <div className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
+          <div className="font-semibold">Overall</div>
+          <div>{layoutQualityLabel(layout.score_breakdown.total_score)}</div>
         </div>
-        <ScoreList scores={layout.score_breakdown} />
-        {layout.warnings.length ? <MessageList title="Warnings" items={layout.warnings} className="border-amber-200 bg-amber-50 text-amber-900" /> : null}
-        <MessageList title="Explanations" items={layout.explanations} />
-        <MessageList title="Assumptions" items={layout.assumptions} />
+        <div className="mt-4 space-y-2 text-sm text-foreground/70">
+          <div>Spacing: {subscoreLabel(layout.score_breakdown.spacing_score)}</div>
+          <div>Companion placement: {subscoreLabel(layout.score_breakdown.companion_score)}</div>
+          <div>Conflict: {subscoreLabel(layout.score_breakdown.conflict_score)}</div>
+          <div>Access: {subscoreLabel(layout.score_breakdown.access_score)}</div>
+          <div>Sunlight: {subscoreLabel(layout.score_breakdown.sunlight_score)}</div>
+          <div>Size fit: {subscoreLabel(layout.score_breakdown.size_fit_score)}</div>
+          <div>Diversity: {subscoreLabel(layout.score_breakdown.diversity_score)}</div>
+        </div>
         <div className="mt-5 flex flex-wrap gap-2">
           <Button onClick={onContinue}>Continue to Plan</Button>
           <Button className="bg-accent text-foreground" onClick={onRegenerate}>Regenerate Layout</Button>
@@ -630,16 +827,112 @@ function LayoutScreen({ layout, onRegenerate, onContinue, onBack }: { layout: La
   );
 }
 
-function ScoreList({ scores }: { scores: Record<string, number> }) {
+function PlanScreen({ layout, plan, onRegenerate, onContinue, onBack, onSave }: { layout: LayoutResult; plan: GeneratedPlan; onRegenerate: () => void; onContinue: () => void; onBack: () => void; onSave: () => void }) {
   return (
-    <div className="mt-4 grid gap-2 text-xs sm:grid-cols-2">
-      {Object.entries(scores).filter(([key]) => key !== "total_score").map(([key, value]) => (
-        <div key={key} className="rounded-md border border-border bg-muted/30 px-2 py-1">
-          {key.replaceAll("_", " ")}: {value.toFixed(1)}
+    <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
+      <GardenLayoutGrid layout={layout} generatedPlan={plan} title="Plan" />
+      <Card>
+        <h2 className="mb-3 text-lg font-semibold">Generated Plan</h2>
+        <p className="text-sm text-foreground/70">{plan.summary}</p>
+        <div className="mt-4 space-y-2 text-sm">
+          {plan.items.map((item) => (
+            <div key={`${item.plant_id}-${item.row}-${item.col}`}>{item.label}: {item.quantity} plantings</div>
+          ))}
         </div>
-      ))}
+        <div className="mt-4 space-y-2 text-sm text-foreground/70">
+          {plan.companion_notes.map((note) => <div key={note}>{note}</div>)}
+        </div>
+        <div className="mt-5 flex flex-wrap gap-2">
+          <Button onClick={onSave}><Save className="mr-2 h-4 w-4" />Save Plan</Button>
+          <Button className="bg-accent text-foreground" onClick={onRegenerate}>Regenerate</Button>
+          <Button className="bg-muted text-foreground" onClick={onBack}>Back to Layout</Button>
+          <Button className="bg-muted text-foreground" onClick={onContinue}>Back to Plant Selection</Button>
+        </div>
+      </Card>
     </div>
   );
+}
+
+function LabelSelect({
+  label,
+  value,
+  onChange,
+  options,
+  displayOptions
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  displayOptions?: string[];
+}) {
+  return (
+    <label className="block text-sm">
+      {label}
+      <select className="mt-1 h-10 w-full rounded-md border border-border px-3" value={value} onChange={(event) => onChange(event.target.value)}>
+        {options.map((option, index) => <option key={option} value={option}>{displayOptions?.[index] ?? option}</option>)}
+      </select>
+    </label>
+  );
+}
+
+function NumberField({ label, value, onChange }: { label: string; value: number | null; onChange: (value: number | null) => void }) {
+  return (
+    <label className="block text-sm">
+      {label}
+      <Input
+        type="number"
+        className="mt-1"
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value === "" ? null : Number(event.target.value))}
+      />
+    </label>
+  );
+}
+
+function SelectedKeyPreview({ item }: { item: SelectedPlantItem }) {
+  return <span>{displayResultLabel(item)}</span>;
+}
+
+function displayResultLabel(item: SelectedPlantItem | PlantSearchResult) {
+  return item.result_type === "cultivar"
+    ? displayCultivarName(item.common_name, item.cultivar_name ?? "")
+    : displayPlantName(item.common_name);
+}
+
+function displayRecommendationName(commonName: string, cultivarName?: string | null) {
+  return cultivarName ? displayCultivarName(commonName, cultivarName) : displayPlantName(commonName);
+}
+
+function recommendationTarget(item: GardenRecommendationResult["recommendations"][number], results: PlantSearchResult[]) {
+  const cultivarSlug = item.cultivar_recommendations[0]?.cultivar_slug;
+  if (cultivarSlug) {
+    return results.find((result) => result.result_type === "cultivar" && result.cultivar_slug === cultivarSlug) ?? results.find((result) => result.result_type === "species" && result.slug === item.plant_slug) ?? null;
+  }
+  return results.find((result) => result.result_type === "species" && result.slug === item.plant_slug) ?? null;
+}
+
+function recommendationSelectionKey(plantSlug: string, cultivarSlug: string | null) {
+  return cultivarSlug ? `cultivar:${cultivarSlug}` : `species:${plantSlug}`;
+}
+
+function selectionKeyForResult(item: PlantSearchResult) {
+  return item.result_type === "cultivar"
+    ? recommendationSelectionKey(item.slug ?? "", item.cultivar_slug ?? null)
+    : recommendationSelectionKey(item.slug ?? "", null);
+}
+
+function recommendationReasons(reasonCodes: string[], explanation: string) {
+  const reasons = reasonCodes.slice(0, 3).map((code) => recommendationReasonLabel(code)).filter(Boolean);
+  return reasons.length ? reasons : [explanation];
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values));
+}
+
+function uniqueNumbers(values: number[]) {
+  return Array.from(new Set(values));
 }
 
 function MessageList({ title, items, className = "border-border bg-muted/40 text-foreground/70" }: { title: string; items: string[]; className?: string }) {
@@ -653,7 +946,17 @@ function MessageList({ title, items, className = "border-border bg-muted/40 text
 }
 
 function StepIndicator({ step }: { step: Step }) {
-  return <div className="hidden text-sm text-foreground/60 sm:block">{step}</div>;
+  const labels: Record<Step, string> = {
+    login: "Login",
+    address: "Address",
+    map: "Draw Map",
+    context: "Garden Context",
+    setup: "Goals & Setup",
+    plants: "Plants",
+    layout: "Layout",
+    plan: "Plan"
+  };
+  return <div className="hidden text-sm text-foreground/60 sm:block">{labels[step]}</div>;
 }
 
 function goalToApi(goal: string) {

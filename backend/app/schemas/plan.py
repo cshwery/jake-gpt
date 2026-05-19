@@ -1,13 +1,26 @@
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+
+PlantingStyle = Literal["rows", "intensive_grid", "raised_beds", "mixed"]
+BedShape = Literal["rectangle", "square", "custom"]
+DirectSowPreference = Literal["direct_sow_when_reasonable", "prefer_transplants", "no_preference"]
 
 
 class GardenGoals(BaseModel):
+    goals: list[str] = Field(default_factory=list)
     goal: str
     maintenance_preference: str
+    experience_level: str = "beginner"
     sunlight: str
     free_text_preferences: str | None = None
+    planting_style: PlantingStyle = "rows"
+    using_raised_beds: bool | None = None
+    raised_beds: dict[str, Any] | None = None
+    can_start_seeds_indoors: bool | None = None
+    prefers_buying_starts: bool | None = None
+    direct_sow_preference: DirectSowPreference | None = None
 
 
 class GeneratePlanRequest(BaseModel):
