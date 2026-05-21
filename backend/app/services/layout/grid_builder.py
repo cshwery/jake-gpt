@@ -19,6 +19,21 @@ class GridBuilder:
         area_sq_ft = _area_sq_ft(garden, garden_context)
         cell_size_ft = options.cell_size_ft or DEFAULT_CELL_SIZE_FT
         layout_style = "raised_beds" if options.using_raised_beds or options.layout_style == "raised_beds" else options.layout_style
+        if layout_style == "chaos":
+            self._last_paths = []
+            return GardenGrid(
+                rows=1,
+                cols=1,
+                cell_size_ft=cell_size_ft,
+                layout_style="chaos",
+                layout_metadata={
+                    "suggested_plant_count_range": _plant_count_range(plant_count),
+                    "north_reference": "guidance is orientation-light; keep taller plants toward the north edge when practical",
+                    "summary": "Chaos mode provides loose planting guidance instead of exact row, bed, or grid placement.",
+                },
+                cells=[],
+                access_paths=[],
+            )
         if layout_style == "rows":
             grid = self._build_row_grid(plant_count, cell_size_ft)
             self._last_paths = []
@@ -175,6 +190,12 @@ def _area_sq_ft(garden: Garden | None, garden_context: Any | None) -> float:
         if isinstance(garden_context, dict):
             return float(garden_context.get("geometry", {}).get("area_sq_ft", 0) or garden_context.get("area_sq_ft", 0) or 0)
     return float(getattr(garden, "area_sq_ft", 0) or 0)
+
+
+def _plant_count_range(plant_count: int) -> str:
+    lower = max(4, min(plant_count, 8))
+    upper = max(lower + 2, min(max(plant_count + 4, 8), 16))
+    return f"{lower}-{upper}"
 
 
 def _cell_id(row: int, col: int) -> str:

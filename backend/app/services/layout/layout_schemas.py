@@ -11,7 +11,7 @@ PlacementRole = Literal["crop", "companion", "pollinator", "border", "path", "su
 class LayoutOptions(BaseModel):
     cell_size_ft: float = 2
     include_paths: bool = True
-    layout_style: Literal["grid", "rows", "raised_beds", "intensive_grid", "mixed"] = "grid"
+    layout_style: Literal["grid", "rows", "raised_beds", "intensive_grid", "mixed", "chaos"] = "grid"
     max_candidates: int = 10
     persist: bool = True
     using_raised_beds: bool | None = None

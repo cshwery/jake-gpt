@@ -96,6 +96,9 @@ describe("GardenLayoutGrid", () => {
     expect(screen.getByText("Row 1 — Tomato")).toBeTruthy();
     expect(screen.getByText(/start at north edge/)).toBeTruthy();
     expect(screen.getAllByText("North ↑").length).toBeGreaterThan(0);
+    const rowsHeading = screen.getAllByText("Rows")[1];
+    const diagramHeading = screen.getByText("Row diagram");
+    expect(rowsHeading.compareDocumentPosition(diagramHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("renders raised bed layouts grouped by bed", () => {
@@ -141,6 +144,35 @@ describe("GardenLayoutGrid", () => {
     expect(screen.getByRole("img", { name: /Raised bed/i })).toBeTruthy();
   });
 
+  it("repeats raised bed symbols according to quantity", () => {
+    render(
+      <GardenLayoutGrid
+        layout={{
+          layout_id: 33,
+          garden_id: 7,
+          summary: "Quantity bed test",
+          grid: {
+            rows: 1,
+            cols: 1,
+            cell_size_ft: 1,
+            orientation: "north_up",
+            layout_style: "raised_beds",
+            access_paths: ["1 raised bed"],
+            cells: [{ cell_id: "B1-A1", row: 0, col: 0, available: true, is_path: false, plant_slug: "bee_balm", label: "Bee Balm", notes: [], group_id: "bed-1", group_label: "Bed 1" }]
+          },
+          placements: [{ plant_slug: "bee_balm", plant_common_name: "Bee Balm", quantity: 18, grid_cells: ["B1-A1"], row: 0, col: 0, warnings: [], placement_role: "pollinator" }],
+          paths: [],
+          score_breakdown: { total_score: 75 },
+          warnings: [],
+          explanations: [],
+          assumptions: []
+        }}
+      />
+    );
+
+    expect(screen.getAllByText("BB").length).toBeGreaterThanOrEqual(18);
+  });
+
   it("shows trees and bushes separately for row layouts", () => {
     render(
       <GardenLayoutGrid
@@ -184,5 +216,97 @@ describe("GardenLayoutGrid", () => {
     expect(screen.getByText("Blueberry")).toBeTruthy();
     expect(screen.getByText(/Row 2 — Lettuce/)).toBeTruthy();
     expect(screen.getByText(/12 in from prior row/)).toBeTruthy();
+  });
+
+  it("reduces row diagram label density for larger row counts", () => {
+    const placements = Array.from({ length: 12 }, (_, index) => ({
+      plant_slug: `crop-${index + 1}`,
+      plant_common_name: `Crop ${index + 1}`,
+      quantity: 1,
+      grid_cells: [`R${index + 1}-1`],
+      row: index,
+      col: 0,
+      width: 1,
+      height: 1,
+      spacing_inches: 12,
+      row_spacing_inches: 18,
+      warnings: [],
+      placement_role: "crop"
+    }));
+    render(
+      <GardenLayoutGrid
+        layout={{
+          layout_id: 5,
+          garden_id: 7,
+          summary: "Many rows",
+          grid: {
+            rows: 12,
+            cols: 1,
+            cell_size_ft: 1,
+            orientation: "north_up",
+            layout_style: "rows",
+            access_paths: [],
+            cells: placements.map((placement) => ({ cell_id: placement.grid_cells[0], row: placement.row, col: 0, available: true, is_path: false, plant_slug: placement.plant_slug, label: placement.plant_common_name, notes: [] }))
+          },
+          placements,
+          paths: [],
+          score_breakdown: { total_score: 75 },
+          warnings: [],
+          explanations: [],
+          assumptions: []
+        }}
+      />
+    );
+
+    expect(screen.getByText(/Row 1: Crop 1/)).toBeTruthy();
+    expect(screen.queryByText(/Row 2: Crop 2/)).toBeNull();
+    expect(screen.getAllByText("North ↑").length).toBeGreaterThan(0);
+  });
+
+  it("renders chaos guidance instead of rows or raised beds", () => {
+    render(
+      <GardenLayoutGrid
+        layout={{
+          layout_id: 6,
+          garden_id: 7,
+          summary: "Chaos layout",
+          grid: {
+            rows: 1,
+            cols: 1,
+            cell_size_ft: 1,
+            orientation: "north_up",
+            layout_style: "chaos",
+            layout_metadata: {
+              suggested_plant_count_range: "6-12",
+              guidance: ["Scatter seed in small clusters."],
+              plant_groups: {
+                easy_direct_sow_crops: ["Lettuce"],
+                pollinator_support_flowers: ["Marigold"],
+                herbs: ["Dill"],
+                larger_sprawling_crops: [],
+                avoid_or_separate: ["Apple"]
+              }
+            },
+            access_paths: [],
+            cells: []
+          },
+          placements: [
+            { plant_slug: "lettuce", plant_common_name: "Lettuce", quantity: 6, grid_cells: [], warnings: [], placement_role: "crop" },
+            { plant_slug: "marigold", plant_common_name: "Marigold", quantity: 6, grid_cells: [], warnings: [], placement_role: "pollinator" }
+          ],
+          paths: [],
+          score_breakdown: { total_score: 75 },
+          warnings: ["Keep apples separate from loose seeded crops."],
+          explanations: [],
+          assumptions: []
+        }}
+      />
+    );
+
+    expect(screen.getByText("Chaos Garden Guidance")).toBeTruthy();
+    expect(screen.getByText("Easy direct-sow crops")).toBeTruthy();
+    expect(screen.getByText("Keep apart notes")).toBeTruthy();
+    expect(screen.queryByText("Row diagram")).toBeNull();
+    expect(screen.queryByRole("img", { name: /Raised bed/i })).toBeNull();
   });
 });

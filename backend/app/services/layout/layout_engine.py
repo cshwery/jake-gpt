@@ -114,6 +114,8 @@ class LayoutEngine:
         if not candidates:
             raise ValueError("At least one layout candidate is required.")
         best = sorted(candidates, key=lambda candidate: (-candidate.score_breakdown.total_score, candidate.name))[0]
+        if best.grid.layout_style == "chaos":
+            best.grid.layout_metadata.update(_chaos_metadata(best.placements, best.warnings))
         area_sq_ft = _area_sq_ft(garden, garden_context)
         grid_area_sq_ft = (best.grid.rows * best.grid.cols) * (best.grid.cell_size_ft ** 2)
         return LayoutResult(
@@ -224,7 +226,42 @@ def _area_sq_ft(garden: Garden | None, garden_context: GardenContext | Any | Non
     return float(getattr(garden, "area_sq_ft", 0) or 0)
 
 
+def _chaos_metadata(placements, warnings: list[str]) -> dict[str, Any]:
+    groups = {
+        "easy_direct_sow_crops": [],
+        "pollinator_support_flowers": [],
+        "herbs": [],
+        "larger_sprawling_crops": [],
+        "avoid_or_separate": [],
+    }
+    for placement in placements:
+        name = placement.cultivar_name or placement.plant_common_name.title()
+        spacing = placement.row_spacing_inches or placement.spacing_inches or 0
+        if placement.placement_role in {"tree", "shrub"}:
+            groups["avoid_or_separate"].append(name)
+        elif placement.placement_role == "pollinator":
+            groups["pollinator_support_flowers"].append(name)
+        elif placement.placement_role == "companion" and "herb" in (placement.location_notes or "").lower():
+            groups["herbs"].append(name)
+        elif spacing >= 48:
+            groups["larger_sprawling_crops"].append(name)
+        else:
+            groups["easy_direct_sow_crops"].append(name)
+    return {
+        "plant_groups": groups,
+        "separation_warnings": warnings,
+        "guidance": [
+            "Scatter seed in small clusters instead of rows or a grid.",
+            "Keep taller plants toward the north edge when practical.",
+            "Use flowers and herbs around borders and between crop clusters.",
+            "Separate plants with pest, disease, or size warnings instead of clustering them together.",
+        ],
+    }
+
+
 def _layout_summary(candidate: LayoutCandidate, score: float) -> str:
+    if candidate.grid.layout_style == "chaos":
+        return f"Chaos Garden Guidance gives you a loose planting strategy instead of a precise map. Selected {candidate.name.replace('_', ' ')} with layout quality {score:.1f}."
     if candidate.grid.layout_style == "raised_beds":
         return f"Raised-bed layout mixes selected plants across beds for density and companion relationships. Selected {candidate.name.replace('_', ' ')} with layout quality {score:.1f}."
     if candidate.grid.layout_style == "rows":

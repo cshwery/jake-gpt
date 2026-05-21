@@ -28,6 +28,8 @@ class PlacementPlanner:
         cultivars: list[PlantCultivar] | None = None,
         companion_graph: CompanionGraphService | None = None,
     ) -> tuple[list[LayoutPlacementDTO], list[str]]:
+        if grid.layout_style == "chaos":
+            return self._plan_chaos_guidance(garden, plants, grid, cultivars=cultivars, companion_graph=companion_graph)
         if grid.layout_style == "rows":
             return self._plan_row_placements(garden, plants, grid, cultivars=cultivars, companion_graph=companion_graph)
         if grid.layout_style == "raised_beds":
@@ -77,6 +79,49 @@ class PlacementPlanner:
                 warnings=quantity_warnings,
             )
             placements.append(placement)
+        return placements, warnings
+
+    def _plan_chaos_guidance(
+        self,
+        garden: Garden,
+        plants: list[Plant],
+        grid: GardenGrid,
+        cultivars: list[PlantCultivar] | None = None,
+        companion_graph: CompanionGraphService | None = None,
+    ) -> tuple[list[LayoutPlacementDTO], list[str]]:
+        cultivar_by_plant = {cultivar.plant_id: cultivar for cultivar in cultivars or []}
+        placements: list[LayoutPlacementDTO] = []
+        warnings: list[str] = []
+        for index, plant in enumerate(plants):
+            cultivar = cultivar_by_plant.get(plant.id)
+            spacing, row_spacing = spacing_for(plant, cultivar)
+            quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+            role = _placement_role(plant, companion_graph)
+            placement_warnings = list(quantity_warnings)
+            if _is_large_woody(plant):
+                placement_warnings.append(f"{plant.common_name.title()} should be handled as a separate tree or bush placement, not scattered through the chaos planting.")
+            warnings.extend(quantity_warnings)
+            placements.append(
+                LayoutPlacementDTO(
+                    plant_id=plant.id,
+                    plant_slug=_plant_slug(plant),
+                    plant_common_name=plant.common_name,
+                    cultivar_id=cultivar.id if cultivar else None,
+                    cultivar_slug=cultivar.slug if cultivar else None,
+                    cultivar_name=cultivar.cultivar_name if cultivar else None,
+                    quantity=quantity,
+                    grid_cells=[],
+                    row=None,
+                    col=None,
+                    x_pct=None,
+                    y_pct=None,
+                    spacing_inches=spacing,
+                    row_spacing_inches=row_spacing,
+                    placement_role=role,
+                    location_notes=_chaos_note(plant, index),
+                    warnings=placement_warnings,
+                )
+            )
         return placements, warnings
 
     def _plan_row_placements(
@@ -180,6 +225,33 @@ class PlacementPlanner:
         occupied: set[str] = set()
         for index, plant in enumerate(plants):
             cultivar = cultivar_by_plant.get(plant.id)
+            if _is_large_woody(plant) and not is_dwarf_or_compact_tree(cultivar, plant):
+                spacing, row_spacing = spacing_for(plant, cultivar)
+                quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+                warning = f"{plant.common_name.title()} is not recommended for raised beds unless using a dwarf or compact variety."
+                warnings.extend([*quantity_warnings, warning])
+                placements.append(
+                    LayoutPlacementDTO(
+                        plant_id=plant.id,
+                        plant_slug=_plant_slug(plant),
+                        plant_common_name=plant.common_name,
+                        cultivar_id=cultivar.id if cultivar else None,
+                        cultivar_slug=cultivar.slug if cultivar else None,
+                        cultivar_name=cultivar.cultivar_name if cultivar else None,
+                        quantity=quantity,
+                        grid_cells=[],
+                        row=None,
+                        col=None,
+                        x_pct=None,
+                        y_pct=None,
+                        spacing_inches=spacing,
+                        row_spacing_inches=row_spacing,
+                        placement_role=_placement_role(plant, companion_graph),
+                        location_notes="Place outside raised beds unless using a confirmed dwarf or compact variety.",
+                        warnings=[*quantity_warnings, warning],
+                    )
+                )
+                continue
             bed_id = bed_ids[index % len(bed_ids)] if bed_ids else None
             candidates = by_bed.get(bed_id, bed_slots) if bed_id else bed_slots
             cell = self._select_cell(plant, candidates, placements, companion_graph, occupied) or next((item for item in bed_slots if item.cell_id not in occupied), None)
@@ -366,6 +438,29 @@ def _placement_role(plant: Plant, companion_graph: CompanionGraphService | None 
     if (getattr(plant, "plant_type", "") or "").lower() in {"herb", "flower"}:
         return "companion"
     return "crop"
+
+
+def is_dwarf_or_compact_tree(cultivar: PlantCultivar | None, plant: Plant) -> bool:
+    if not _is_large_woody(plant):
+        return True
+    if cultivar is None:
+        return False
+    if getattr(cultivar, "compact_variety", False) or getattr(cultivar, "container_friendly", False):
+        return True
+    name = (getattr(cultivar, "cultivar_name", "") or "").lower()
+    return "dwarf" in name or "compact" in name or "patio" in name
+
+
+def _chaos_note(plant: Plant, index: int) -> str:
+    if _is_large_woody(plant):
+        return "Keep as a separate tree or bush anchor outside the loose seeded area."
+    if _is_pollinator(plant):
+        return "Scatter lightly near borders and between crops to support pollinators."
+    if getattr(plant, "direct_sow_allowed", False):
+        return "Direct sow in small clusters, then thin seedlings to comfortable spacing."
+    if index == 0:
+        return "Use as one of the main loose clusters; avoid precise row spacing."
+    return "Plant in small clusters rather than a strict grid."
 
 
 def _plant_slug(plant: Plant) -> str:
