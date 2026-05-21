@@ -191,6 +191,7 @@ export type LayoutResult = {
       notes: string[];
     }>;
     layout_style?: string;
+    layout_metadata?: Record<string, unknown>;
     access_paths: string[];
   };
   placements: Array<{
@@ -226,7 +227,7 @@ export type GardenGoals = {
   experience_level?: string;
   sunlight: string;
   free_text_preferences?: string | null;
-  planting_style?: "rows" | "intensive_grid" | "raised_beds" | "mixed";
+  planting_style?: "rows" | "intensive_grid" | "raised_beds" | "mixed" | "chaos";
   using_raised_beds?: boolean | null;
   raised_beds?: RaisedBedsSetup | null;
   start_preference?: "germinate_myself" | "buy_from_nursery" | "no_preference" | null;

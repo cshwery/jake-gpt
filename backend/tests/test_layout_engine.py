@@ -148,11 +148,30 @@ def test_row_layout_places_each_plant_in_a_planting_row() -> None:
     )
 
     assert result.grid.layout_style == "rows"
+    assert result.grid.layout_metadata["row_direction"] == "west_to_east"
     assert result.grid.rows == len(plants)
     assert result.paths == []
     assert result.placements[0].width > 1
     assert all(cell.group_label and cell.group_label.startswith("Row") for cell in result.grid.cells)
     assert "Row layout" in result.summary
+
+
+def test_row_layout_separates_trees_and_shrubs_from_crop_rows() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "basil"), _plant(3, "apple", tree=True), _plant(4, "blueberry", shrub=True)]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=480),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=480, sunlight_category="full_sun"),
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="rows"),
+    )
+
+    row_crops = [placement for placement in result.placements if placement.placement_role not in {"tree", "shrub"}]
+    woody = [placement for placement in result.placements if placement.placement_role in {"tree", "shrub"}]
+    assert {placement.plant_slug for placement in row_crops} == {"tomato", "basil"}
+    assert {placement.plant_slug for placement in woody} == {"apple", "blueberry"}
+    assert all(not placement.grid_cells for placement in woody)
+    assert all(placement.row is None for placement in woody)
 
 
 def test_raised_bed_layout_groups_cells_by_bed_and_mixes_plants() -> None:
@@ -173,10 +192,62 @@ def test_raised_bed_layout_groups_cells_by_bed_and_mixes_plants() -> None:
 
     bed_cells = [cell for cell in result.grid.cells if cell.group_id and cell.group_id.startswith("bed-")]
     assert result.grid.layout_style == "raised_beds"
+    assert result.grid.layout_metadata["bed_length_ft"] == 4
+    assert result.grid.layout_metadata["bed_width_ft"] == 2
     assert {cell.group_label for cell in bed_cells} == {"Bed 1", "Bed 2"}
     assert any(cell.is_path for cell in result.grid.cells)
     assert all("Bed" in (placement.location_notes or "") for placement in result.placements)
     assert "Raised-bed layout" in result.summary
+
+
+def test_chaos_layout_returns_guidance_without_grid_rows_or_beds() -> None:
+    plants = [_plant(1, "lettuce"), _plant(2, "marigold", flower=True), _plant(3, "apple", tree=True)]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=240),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=240, sunlight_category="full_sun"),
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="chaos"),
+    )
+
+    assert result.grid.layout_style == "chaos"
+    assert result.grid.cells == []
+    assert all(not placement.grid_cells for placement in result.placements)
+    assert "plant_groups" in result.grid.layout_metadata
+    assert "Chaos Garden Guidance" in result.summary
+
+
+def test_raised_bed_layout_keeps_non_dwarf_trees_out_of_beds() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "apple", tree=True)]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=96),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=96, sunlight_category="full_sun"),
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="raised_beds", using_raised_beds=True),
+    )
+
+    apple = next(placement for placement in result.placements if placement.plant_slug == "apple")
+    assert apple.grid_cells == []
+    assert apple.placement_role == "tree"
+    assert any("not recommended for raised beds" in warning.lower() for warning in apple.warnings)
+
+
+def test_raised_bed_layout_allows_compact_tree_cultivar() -> None:
+    apple = _plant(2, "apple", tree=True)
+    dwarf = SimpleNamespace(id=20, plant_id=2, slug="apple_dwarf", cultivar_name="Dwarf Apple", compact_variety=True, container_friendly=False, spacing_inches_override=36, row_spacing_inches_override=36)
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=96),
+        [apple],
+        garden_context=SimpleNamespace(area_sq_ft=96, sunlight_category="full_sun"),
+        cultivars=[dwarf],
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="raised_beds", using_raised_beds=True),
+    )
+
+    apple_placement = next(placement for placement in result.placements if placement.plant_slug == "apple")
+    assert apple_placement.grid_cells
+    assert apple_placement.cultivar_slug == "apple_dwarf"
 
 
 def test_layout_engine_persists_layout_and_placements() -> None:
@@ -236,14 +307,14 @@ def _garden(area: float = 240):
     return SimpleNamespace(id=7, area_sq_ft=area)
 
 
-def _plant(id: int, slug: str, spacing: int = 12, row_spacing: int = 18, tree: bool = False, flower: bool = False):
+def _plant(id: int, slug: str, spacing: int = 12, row_spacing: int = 18, tree: bool = False, flower: bool = False, shrub: bool = False):
     return SimpleNamespace(
         id=id,
         slug=slug,
         common_name=slug.replace("_", " "),
         tree=tree,
         is_tree=tree,
-        is_shrub=False,
+        is_shrub=shrub,
         flower=flower,
         ornamental=flower,
         edible=not flower,

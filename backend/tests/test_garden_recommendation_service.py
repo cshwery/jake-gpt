@@ -131,6 +131,26 @@ def test_space_scoring_penalizes_large_tree_in_small_garden_unless_shade_goal() 
     assert _rec(shade, "apple").score_breakdown.space_score >= -10
 
 
+def test_chaos_recommendations_bias_easy_direct_sow_candidates() -> None:
+    service = _service(
+        [
+            _plant(1, "lettuce", maintenance="Low", direct_sow=True),
+            _plant(2, "marigold", edible=False, flower=True, pollinator=9, maintenance="Low", direct_sow=True),
+            _plant(3, "apple", tree=True, perennial=True, maintenance="High", spread=240),
+        ]
+    )
+
+    result = service.recommend_for_garden(_context(area_sq_ft=120), _goals(["food"], planting_style="chaos"), [], [], include_excluded=True)
+
+    lettuce = _rec(result, "lettuce")
+    marigold = _rec(result, "marigold")
+    apple = _rec(result, "apple")
+    assert "CHAOS_DIRECT_SOW" in lettuce.reason_codes
+    assert "CHAOS_LOW_MAINTENANCE" in marigold.reason_codes
+    assert "CHAOS_TREE_WARNING" in apple.reason_codes
+    assert lettuce.score > apple.score
+
+
 def test_recommendation_result_contains_breakdown_reasons_explanation_warnings_and_assumptions() -> None:
     service = _service([_plant(1, "tomato")])
 
@@ -261,8 +281,8 @@ def _context(zone: str = "6b", sunlight: str = "full_sun", area_sq_ft: float = 4
     )
 
 
-def _goals(goals: list[str], maintenance: str = "moderate", experience: str = "beginner") -> GardenGoalInput:
-    return GardenGoalInput(goals=goals, primary_goal=goals[0] if goals else None, maintenance_preference=maintenance, experience_level=experience)
+def _goals(goals: list[str], maintenance: str = "moderate", experience: str = "beginner", planting_style: str = "rows") -> GardenGoalInput:
+    return GardenGoalInput(goals=goals, primary_goal=goals[0] if goals else None, maintenance_preference=maintenance, experience_level=experience, planting_style=planting_style)
 
 
 def _plant(
@@ -281,6 +301,8 @@ def _plant(
     pollinator: int | None = None,
     spread: int | None = 18,
     family_id: int | None = None,
+    direct_sow: bool = False,
+    transplant: bool = False,
 ) -> Plant:
     return Plant(
         id=id,
@@ -301,6 +323,8 @@ def _plant(
         water_requirement=water,
         spacing_inches=12,
         row_spacing_inches=24,
+        direct_sow_allowed=direct_sow,
+        transplant_recommended=transplant,
         typical_spread_inches=spread,
         maintenance_level=maintenance,
         pollinator_value_score=pollinator,

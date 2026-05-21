@@ -66,6 +66,12 @@ export function recommendationReasonLabel(code: string): string {
     SPACE_FIT: "Fits your garden size.",
     SPACE_WARNING: "Space may be tight.",
     BEGINNER_FRIENDLY: "Good choice for a beginner.",
+    CHAOS_LOW_MAINTENANCE: "Works well for loose, lower-maintenance planting.",
+    CHAOS_DIRECT_SOW: "Can usually be direct-sown.",
+    CHAOS_EASY_CROP: "Good candidate for chaos gardening.",
+    CHAOS_POLLINATOR: "Useful for pollinators and garden edges.",
+    CHAOS_SPACE_WARNING: "Needs more space or support than most chaos-garden picks.",
+    CHAOS_TREE_WARNING: "Better handled separately from a loose seeded planting.",
     CULTIVAR_DAYS_TO_MATURITY_FIT: "Matures in time for your season.",
     CULTIVAR_DISEASE_RESISTANCE: "Cultivar has useful resistance.",
     FALLBACK_TO_SPECIES_DEFAULTS: "Used species-level information where cultivar data was missing."
@@ -73,17 +79,23 @@ export function recommendationReasonLabel(code: string): string {
   return labels[code] ?? code.replaceAll("_", " ").toLowerCase();
 }
 
-export function layoutQualityLabel(score: number): string {
+export function layoutQualityLabel(score: number | null | undefined): string {
+  if (score == null || Number.isNaN(score)) return "Not evaluated";
   if (score >= 85) return "Excellent Layout";
   if (score >= 70) return "Good Layout";
   if (score >= 50) return "Acceptable Layout";
   if (score >= 30) return "Needs Review";
+  if (score >= 1) return "Poor Layout";
+  if (score === 0) return "Not evaluated";
   return "Poor Layout";
 }
 
-export function subscoreLabel(score: number): string {
+export function subscoreLabel(score: number | null | undefined): string {
+  if (score == null || Number.isNaN(score)) return "Not evaluated";
   if (score >= 80) return "Good";
   if (score >= 50) return "Acceptable";
+  if (score >= 1) return "Needs Review";
+  if (score === 0) return "Not evaluated";
   return "Needs Review";
 }
 

@@ -10,8 +10,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { GardenContextRead, GardenGoals, GardenRead, GardenRecommendationResult, GeneratedPlan, GeocodeResult, LayoutResult, PlantSearchResult, PropertyRead } from "@/types/api";
-import { areaCategory, areaWarning, displayCultivarName, displayPlantName, fitLabel, layoutQualityLabel, recommendationLabel, recommendationReasonLabel, subscoreLabel } from "@/lib/product";
+import { areaCategory, areaWarning, displayCultivarName, displayPlantName, fitLabel, layoutQualityLabel, recommendationLabel, recommendationReasonLabel } from "@/lib/product";
 import { dedupePlantResults, selectionKeyForPlantResult, uniqueNumbers, uniqueStrings } from "@/lib/plantSelection";
+import { applyGardenOrganization, layoutStyleFromGoals, organizationModeFromGoals } from "@/lib/gardenOrganization";
 
 type Step = "login" | "address" | "map" | "context" | "setup" | "plants" | "layout" | "plan";
 
@@ -32,6 +33,7 @@ export default function Home() {
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedPlants, setSelectedPlants] = useState<SelectedPlantItem[]>([]);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [savingGarden, setSavingGarden] = useState(false);
   const [goals, setGoals] = useState<GardenGoals>({
     goal: "Food",
     goals: ["food"],
@@ -133,18 +135,23 @@ export default function Home() {
     }
   }
 
-  async function saveGardenBoundary() {
-    if (!property || !draftPolygon) return;
+  async function saveGardenBoundary(continueAfterSave = false) {
+    const polygon = draftPolygon ?? garden?.polygon_geojson ?? null;
+    if (!property || !polygon) return;
     setError(null);
+    setSavingGarden(true);
     try {
       const created = await api.request<GardenRead>("/gardens", {
         method: "POST",
-        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: draftPolygon })
+        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: polygon })
       });
       setGarden(created);
       setDraftAreaSqM(created.area_sq_m);
+      if (continueAfterSave) setStep("context");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Garden save failed");
+    } finally {
+      setSavingGarden(false);
     }
   }
 
@@ -236,6 +243,9 @@ export default function Home() {
           limit: 25,
           include_excluded: false,
           notes: goals.free_text_preferences ?? null,
+          planting_style: goals.planting_style ?? "rows",
+          using_raised_beds: goals.using_raised_beds,
+          raised_beds: goals.raised_beds,
           start_preference: goals.start_preference ?? "no_preference",
           can_start_seeds_indoors: goals.can_start_seeds_indoors,
           prefers_buying_starts: goals.prefers_buying_starts,
@@ -280,9 +290,9 @@ export default function Home() {
           accepted_recommendation_slugs: selectedPlantSlugs,
           accepted_cultivar_slugs: selectedCultivarSlugs,
           options: {
-            cell_size_ft: goals.using_raised_beds ? 1 : goals.planting_style === "rows" ? 1 : 2,
-            include_paths: goals.using_raised_beds ? false : goals.planting_style !== "rows",
-            layout_style: goals.using_raised_beds ? "raised_beds" : goals.planting_style === "rows" ? "rows" : "grid",
+            cell_size_ft: goals.using_raised_beds ? 1 : goals.planting_style === "rows" || goals.planting_style === "chaos" ? 1 : 2,
+            include_paths: goals.using_raised_beds ? false : !["rows", "chaos"].includes(goals.planting_style ?? "rows"),
+            layout_style: layoutStyleFromGoals(goals),
             max_candidates: 10,
             persist: true,
             using_raised_beds: goals.using_raised_beds,
@@ -336,7 +346,7 @@ export default function Home() {
         {step === "login" ? <LoginForm onSubmit={handleLogin} /> : null}
         {step === "address" ? <AddressForm onSubmit={handleAddress} geocode={geocode} onConfirm={confirmProperty} /> : null}
         {step === "map" && property ? (
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
             <GardenMap
               property={property}
               garden={garden}
@@ -348,29 +358,20 @@ export default function Home() {
                 setDraftPolygon(null);
                 setDraftAreaSqM(null);
               }}
-              onSaveBoundary={saveGardenBoundary}
-              canSaveBoundary={Boolean(draftPolygon)}
+              canSaveBoundary={Boolean(draftPolygon ?? garden?.polygon_geojson)}
             />
-            <Card>
-              <h2 className="mb-2 text-lg font-semibold">Draw Map</h2>
-              <ol className="mb-4 list-inside list-decimal space-y-1 text-sm text-foreground/70">
-                <li>Confirm property</li>
-                <li>Zoom in to your yard</li>
-                <li>Draw the actual planting area</li>
-                <li>Confirm size and save</li>
-              </ol>
+            <Card className="self-start">
+              <h2 className="mb-3 text-lg font-semibold">Draw Map</h2>
+              <DrawMapStepPanel hasPolygon={Boolean(draftPolygon ?? garden?.polygon_geojson)} hasSavedGarden={Boolean(garden)} />
               <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
                 <div className="text-xs font-medium uppercase text-foreground/50">Confirmed property</div>
                 <div>{property.normalized_address}</div>
               </div>
               <AreaPanel areaSqM={draftAreaSqM ?? garden?.area_sq_m ?? null} />
-              <Button className="mt-4 w-full" disabled={!draftPolygon} onClick={saveGardenBoundary}>Save Garden Boundary</Button>
-              {garden ? (
-                <div className="space-y-2 text-sm">
-                  <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3">Saved backend area: {garden.area_sq_ft.toFixed(0)} sq ft</div>
-                  <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue to Garden Context</Button>
-                </div>
-              ) : null}
+              {garden ? <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3 text-sm">Saved area: {garden.area_sq_ft.toFixed(0)} sq ft</div> : null}
+              <Button className="mt-4 w-full" disabled={savingGarden || !Boolean(draftPolygon ?? garden?.polygon_geojson)} onClick={() => saveGardenBoundary(true)}>
+                {savingGarden ? "Saving..." : "Save and Continue"}
+              </Button>
             </Card>
           </div>
         ) : null}
@@ -391,10 +392,10 @@ export default function Home() {
           />
         ) : null}
         {step === "layout" && property && garden && layout ? (
-          <LayoutScreen property={property} garden={garden} layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
+          <LayoutScreen layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
         {step === "plan" && property && garden && plan && layout ? (
-          <PlanScreen property={property} garden={garden} layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
+          <PlanScreen layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
         ) : null}
       </section>
     </main>
@@ -454,6 +455,28 @@ function AreaPanel({ areaSqM }: { areaSqM: number | null }) {
   );
 }
 
+function DrawMapStepPanel({ hasPolygon, hasSavedGarden }: { hasPolygon: boolean; hasSavedGarden: boolean }) {
+  const steps = [
+    { label: "Confirm property", active: false, complete: true, detail: "Use the satellite map to make sure the pin is centered on the right yard." },
+    { label: "Draw planting area", active: !hasPolygon, complete: hasPolygon, detail: "Draw only the space where plants will go. Skip patios, lawn, paths, and buildings." },
+    { label: "Save and continue", active: hasPolygon, complete: hasSavedGarden, detail: hasPolygon ? "Save the boundary and move to Garden Context." : "This unlocks after a garden boundary exists." }
+  ];
+  return (
+    <div className="mb-4 space-y-2">
+      {steps.map((item, index) => (
+        <div key={item.label} className={`rounded-md border p-3 text-sm ${item.active ? "border-primary bg-primary/10" : item.complete ? "border-emerald-200 bg-emerald-50" : "border-border bg-muted/30"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-semibold">Step {index + 1}: {item.label}</div>
+            <div className="text-xs text-foreground/60">{item.complete ? "Done" : item.active ? "Current" : "Next"}</div>
+          </div>
+          {item.active ? <div className="mt-1 text-foreground/70">{item.detail}</div> : null}
+        </div>
+      ))}
+      <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-foreground/70">Tip: most backyard beds are 25-500 sq ft. Zoom in before drawing corners.</div>
+    </div>
+  );
+}
+
 function ContextForm({
   garden,
   context,
@@ -505,9 +528,16 @@ function ContextForm({
         <ContextList title="Warnings" items={context.warnings} tone="warning" />
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={context ? onRecalculate : onSave}>{context ? "Recalculate Context" : "Calculate Context"}</Button>
-        {context ? <Button className="bg-accent text-foreground" onClick={onContinue}>Continue to Goals & Setup</Button> : null}
+        {!context ? <Button onClick={onSave}>Calculate Context</Button> : null}
+        {context ? <Button onClick={onContinue}>Continue to Goals & Setup</Button> : null}
       </div>
+      {context ? (
+        <details className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Advanced estimates</summary>
+          <p className="mt-2 text-foreground/70">Use this if you changed the garden boundary or sunlight estimate.</p>
+          <Button className="mt-3 bg-muted text-foreground" onClick={onRecalculate}>Refresh estimates</Button>
+        </details>
+      ) : null}
     </Card>
   );
 }
@@ -593,8 +623,8 @@ function GoalsSetupForm({
   setGoals: (goals: GardenGoals) => void;
   onContinue: () => void;
 }) {
-  const usingRaisedBeds = goals.using_raised_beds === true;
-  const plantingStyle = goals.planting_style ?? "rows";
+  const organizationMode = organizationModeFromGoals(goals);
+  const usingRaisedBeds = organizationMode === "raised_beds";
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <Card>
@@ -604,15 +634,13 @@ function GoalsSetupForm({
           <LabelSelect label="What is your main goal?" value={goals.goal} onChange={(value) => setGoals({ ...goals, goal: value, goals: recommendationGoals({ ...goals, goal: value }) })} options={["Food", "Flowers", "Shade", "Pollinators", "Herbs", "Fruit", "Native plants", "Combination"]} />
           <LabelSelect label="Maintenance preference" value={goals.maintenance_preference} onChange={(value) => setGoals({ ...goals, maintenance_preference: value })} options={["Low", "Moderate", "High"]} />
           <LabelSelect label="Experience" value={goals.experience_level ?? "beginner"} onChange={(value) => setGoals({ ...goals, experience_level: value })} options={["Beginner", "Intermediate", "Advanced"]} />
-          <LabelSelect label="Are you planting in raised beds?" value={goals.using_raised_beds === true ? "Yes" : goals.using_raised_beds === false ? "No" : "Not sure"} onChange={(value) => setGoals({ ...goals, using_raised_beds: value === "Yes" ? true : value === "No" ? false : null, planting_style: value === "Yes" ? "raised_beds" : plantingStyle === "raised_beds" ? "rows" : plantingStyle })} options={["Yes", "No", "Not sure"]} />
-          {goals.using_raised_beds !== true ? (
-            <LabelSelect
-              label="Would you like JakeGPT to lay this out in rows?"
-              value={plantingStyle === "rows" ? "Yes" : "No"}
-              onChange={(value) => setGoals({ ...goals, planting_style: value === "Yes" ? "rows" : "mixed" })}
-              options={["Yes", "No"]}
-            />
-          ) : null}
+          <LabelSelect
+            label="How do you like to organize your garden?"
+            value={organizationMode}
+            onChange={(value) => setGoals(applyGardenOrganization(goals, value as "raised_beds" | "rows" | "chaos"))}
+            options={["raised_beds", "rows", "chaos"]}
+            displayOptions={["Raised Beds", "Rows", "Chaos"]}
+          />
           <LabelSelect
             label="How do you prefer to get plant starts?"
             value={goals.start_preference ?? "no_preference"}
@@ -628,6 +656,11 @@ function GoalsSetupForm({
             displayOptions={["Direct sow when reasonable", "Prefer transplants", "No preference"]}
           />
         </div>
+        {organizationMode === "chaos" ? (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            Chaos mode gives you a loose planting strategy instead of a precise map. JakeGPT will recommend hardy, lower-maintenance plants and flag combinations that should not be clustered together.
+          </div>
+        ) : null}
         <label className="mt-4 block text-sm">
           Preferences
           <textarea
@@ -832,55 +865,36 @@ function PlantCard({ plant, selected, onToggle }: { plant: PlantSearchResult; se
 }
 
 function LayoutScreen({
-  property,
-  garden,
   layout,
   onRegenerate,
   onContinue,
   onBack
 }: {
-  property: PropertyRead;
-  garden: GardenRead;
   layout: LayoutResult;
   onRegenerate: () => void;
   onContinue: () => void;
   onBack: () => void;
 }) {
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
-      <div className="space-y-5">
-        <GardenMap property={property} garden={garden} layout={layout} />
-        <GardenLayoutGrid layout={layout} title="Layout" />
-      </div>
-      <Card>
-        <h2 className="mb-3 text-lg font-semibold">Layout Actions</h2>
-        <p className="text-sm text-foreground/70">{layout.summary}</p>
-        <div className="mt-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
-          <div className="font-semibold">{layoutQualityLabel(layout.score_breakdown.total_score)}</div>
-          <div className="text-xs text-foreground/60">Top of the grid represents north.</div>
+    <div className="space-y-5">
+      <Card className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Layout</h2>
+          <p className="mt-1 text-sm text-foreground/70">{layout.summary}</p>
+          <div className="mt-2 text-sm font-semibold">{layoutQualityLabel(layout.score_breakdown?.total_score)}</div>
         </div>
-        <div className="mt-4 space-y-2 text-sm text-foreground/70">
-          <div>Spacing: {subscoreLabel(layout.score_breakdown.spacing_score)}</div>
-          <div>Companion placement: {subscoreLabel(layout.score_breakdown.companion_score)}</div>
-          <div>Conflict: {subscoreLabel(layout.score_breakdown.conflict_score)}</div>
-          <div>Access: {subscoreLabel(layout.score_breakdown.access_score)}</div>
-          <div>Sunlight: {subscoreLabel(layout.score_breakdown.sunlight_score)}</div>
-          <div>Size fit: {subscoreLabel(layout.score_breakdown.size_fit_score)}</div>
-          <div>Diversity: {subscoreLabel(layout.score_breakdown.diversity_score)}</div>
-        </div>
-        <div className="mt-5 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button onClick={onContinue}>Continue to Plan</Button>
           <Button className="bg-accent text-foreground" onClick={onRegenerate}>Regenerate Layout</Button>
           <Button className="bg-muted text-foreground" onClick={onBack}>Back to Recommendations</Button>
         </div>
       </Card>
+      <GardenLayoutGrid layout={layout} title="Layout" />
     </div>
   );
 }
 
 function PlanScreen({
-  property,
-  garden,
   layout,
   plan,
   onRegenerate,
@@ -888,8 +902,6 @@ function PlanScreen({
   onBack,
   onSave
 }: {
-  property: PropertyRead;
-  garden: GardenRead;
   layout: LayoutResult;
   plan: GeneratedPlan;
   onRegenerate: () => void;
@@ -900,7 +912,6 @@ function PlanScreen({
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-5">
-        <GardenMap property={property} garden={garden} layout={layout} />
         <GardenLayoutGrid layout={layout} title="Plan" />
       </div>
       <Card>

@@ -3,7 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
-PlantingStyle = Literal["rows", "intensive_grid", "raised_beds", "mixed"]
+PlantingStyle = Literal["rows", "intensive_grid", "raised_beds", "mixed", "chaos"]
 BedShape = Literal["rectangle", "square", "custom"]
 DirectSowPreference = Literal["direct_sow_when_reasonable", "prefer_transplants", "no_preference"]
 

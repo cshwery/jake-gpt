@@ -21,7 +21,7 @@ class GardenGoalInput(BaseModel):
     primary_goal: GoalValue | None = None
     maintenance_preference: MaintenanceValue = "moderate"
     experience_level: ExperienceLevel = "beginner"
-    planting_style: Literal["rows", "intensive_grid", "raised_beds", "mixed"] = "rows"
+    planting_style: Literal["rows", "intensive_grid", "raised_beds", "mixed", "chaos"] = "rows"
     using_raised_beds: bool | None = None
     raised_beds: dict[str, Any] | None = None
     start_preference: Literal["germinate_myself", "buy_from_nursery", "no_preference"] | None = None
@@ -48,6 +48,7 @@ class ScoreBreakdown(BaseModel):
     family_risk_score: float = 0
     cultivar_score: float = 0
     beginner_score: float = 0
+    chaos_score: float = 0
     diversity_score: float = 0
     total_score: float = 0
 
@@ -106,6 +107,12 @@ class GardenRecommendationRequest(BaseModel):
     include_excluded: bool = False
     notes: str | None = None
     start_preference: Literal["germinate_myself", "buy_from_nursery", "no_preference"] | None = None
+    planting_style: Literal["rows", "intensive_grid", "raised_beds", "mixed", "chaos"] = "rows"
+    using_raised_beds: bool | None = None
+    raised_beds: dict[str, Any] | None = None
+    can_start_seeds_indoors: bool | None = None
+    prefers_buying_starts: bool | None = None
+    direct_sow_preference: Literal["direct_sow_when_reasonable", "prefer_transplants", "no_preference"] | None = None
 
 
 @dataclass(frozen=True)
@@ -231,6 +238,9 @@ class GardenRecommendationService:
         warnings.extend(warn)
         breakdown.beginner_score, codes = _beginner_score(plant, goals.experience_level)
         reason_codes.extend(codes)
+        breakdown.chaos_score, codes, warn = _chaos_score(plant, context, goals)
+        reason_codes.extend(codes)
+        warnings.extend(warn)
         cultivar_recommendations = self._rank_cultivars(plant, context, goals)
         if cultivar_recommendations:
             breakdown.cultivar_score = min(max(cultivar_recommendations[0].score / 10, 0), 8)
@@ -271,16 +281,16 @@ class GardenRecommendationService:
                     codes.append("NUTRIENT_SUPPORT")
                 elif edge.relationship_type == "avoid":
                     codes.append("AVOID_RELATIONSHIP")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "disease_risk":
                     codes.append("DISEASE_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "pest_risk":
                     codes.append("PEST_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "allelopathy":
                     codes.append("ALLELOPATHY_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 if edge.relationship_type in STRONG_NEGATIVE_RELATIONSHIP_TYPES and edge.score <= -20:
                     score -= 25
         return round(score, 2), codes, warnings
@@ -326,7 +336,7 @@ class GardenRecommendationService:
                     warning_type=conflict.relationship_type,
                     plant_slugs=[conflict.source_plant_slug, conflict.target_plant_slug],
                     severity="high" if conflict.score <= -20 else "medium",
-                    message=f"{conflict.rationale} {conflict.suggested_action}",
+                    message=f"{_gardener_warning(conflict.rationale)} {conflict.suggested_action}",
                 )
             )
         for index, plant_slug in enumerate(selected):
@@ -464,6 +474,50 @@ def _beginner_score(plant: Plant, experience: str) -> tuple[float, list[str]]:
     return 0, []
 
 
+def _chaos_score(plant: Plant, context: GardenContextDTO, goals: GardenGoalInput) -> tuple[float, list[str], list[str]]:
+    if goals.planting_style != "chaos":
+        return 0, [], []
+    slug = plant.slug or plant.common_name.lower().replace(" ", "_")
+    codes: list[str] = []
+    warnings: list[str] = []
+    score = 0.0
+    maintenance = (plant.maintenance_level or "").lower()
+    if maintenance == "low":
+        score += 12
+        codes.append("CHAOS_LOW_MAINTENANCE")
+    elif maintenance in {"high", "intensive"}:
+        score -= 18
+        codes.append("MAINTENANCE_WARNING")
+    if getattr(plant, "direct_sow_allowed", False):
+        score += 12
+        codes.append("CHAOS_DIRECT_SOW")
+    if getattr(plant, "transplant_recommended", False) and not getattr(plant, "direct_sow_allowed", False):
+        score -= 8
+        codes.append("CHAOS_SPACE_WARNING")
+    if slug in {"bean", "beans", "pea", "peas", "lettuce", "kale", "calendula", "marigold", "nasturtium", "zinnia", "sunflower", "dill", "cilantro"}:
+        score += 14
+        codes.append("CHAOS_EASY_CROP")
+    if plant.flower or plant.ornamental or (plant.pollinator_value_score or 0) >= 7:
+        score += 10
+        codes.append("CHAOS_POLLINATOR")
+    if _is_herb(plant):
+        score += 6
+        codes.append("CHAOS_EASY_CROP")
+    spacing = plant.row_spacing_inches or plant.spacing_inches or plant.typical_spread_inches or 12
+    if spacing >= 48 and slug not in {"sunflower"}:
+        score -= 8
+        codes.append("CHAOS_SPACE_WARNING")
+    if slug in {"squash", "pumpkin", "melon", "zucchini"} and context.geometry.area_sq_ft < 150:
+        score -= 12
+        warnings.append(f"{plant.common_name} can sprawl; use it in chaos mode only if you have enough open space.")
+    if plant.tree or plant.is_tree or plant.is_shrub:
+        if "trees" not in goals.goals and "fruit" not in goals.goals and goals.primary_goal not in {"trees", "fruit"}:
+            score -= 30
+            codes.append("CHAOS_TREE_WARNING")
+            warnings.append(f"{plant.common_name} is better handled as a separate tree or bush placement, not scattered through a chaos garden.")
+    return score, codes, warnings
+
+
 def _zone_number(zone: str | None) -> int | None:
     if not zone:
         return None
@@ -487,6 +541,16 @@ def _recommendation_type(codes: list[str]) -> str:
     if any(code.endswith("_GOAL_MATCH") for code in codes):
         return "goal_fit"
     return "climate_fit"
+
+
+def _gardener_warning(message: str) -> str:
+    internal_nightshade = "Nightshade crops can share disease and pest pressure; close clustering should be flagged as a risk rather than a beneficial pairing."
+    if message == internal_nightshade:
+        return "Tomatoes, peppers, eggplants, and potatoes are all nightshades. Try not to cluster them too closely because they can share pest and disease pressure."
+    return (
+        message.replace("flagged as a risk rather than a beneficial pairing", "treated as something to separate in the garden")
+        .replace("beneficial pairing", "helpful pairing")
+    )
 
 
 def _explanation(plant: Plant, recommendation_type: str, codes: list[str], warnings: list[str]) -> str:
