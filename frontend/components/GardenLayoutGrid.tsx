@@ -78,6 +78,7 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
         </div>
 
         <div className="space-y-3 text-sm">
+          {normalized.design_plan ? <PlantingDesignInsight designPlan={normalized.design_plan} layoutStyle={normalized.grid.layout_style} /> : null}
           {normalized.score_breakdown ? (
             <div className="rounded-md border border-border bg-muted/30 p-3">
               <div className="mb-2 font-semibold">Layout quality</div>
@@ -140,6 +141,7 @@ function normalizeLayout(layout: LayoutResult) {
     grid: { ...layout.grid, layout_style: layout.grid.layout_style ?? "grid", layout_metadata: layout.grid.layout_metadata ?? {} },
     placements: layout.placements,
     score_breakdown: layout.score_breakdown,
+    design_plan: layout.design_plan ?? null,
     warnings: layout.warnings ?? [],
     explanations: layout.explanations ?? [],
     assumptions: layout.assumptions ?? [],
@@ -196,6 +198,7 @@ function normalizePlan(plan?: GeneratedPlan | null) {
       placement_role: "crop"
     })),
     score_breakdown: null,
+    design_plan: null,
     warnings: [],
     explanations: [],
     assumptions: [],
@@ -409,6 +412,28 @@ function ChaosLayoutView({ placements, metadata, warnings }: { placements: Norma
       {warnings.length ? <MessageBlock title="Keep apart notes" items={warnings} tone="warning" /> : null}
     </div>
   );
+}
+
+function PlantingDesignInsight({ designPlan, layoutStyle }: { designPlan: NonNullable<LayoutResult["design_plan"]>; layoutStyle?: string | null }) {
+  const styleGuidance =
+    layoutStyle === "raised_beds"
+      ? designPlan.placement_guidance.raised_beds_guidance
+      : layoutStyle === "rows"
+        ? designPlan.placement_guidance.rows_guidance
+        : layoutStyle === "chaos"
+          ? designPlan.placement_guidance.chaos_guidance
+          : [];
+  const clusterNotes = designPlan.companion_clusters.slice(0, 3).map((cluster) => cluster.placement_guidance);
+  const separation = designPlan.separation_rules.slice(0, 3).map((rule) => rule.rationale);
+  const items = uniqueStrings([
+    designPlan.summary,
+    ...clusterNotes,
+    ...styleGuidance,
+    ...designPlan.placement_guidance.border_guidance,
+    ...designPlan.placement_guidance.north_south_guidance,
+    ...separation
+  ]).slice(0, 7);
+  return <MessageBlock title="Planting design" items={items} />;
 }
 
 function PlantSymbolLegend({ placements, symbols }: { placements: NormalizedPlacement[]; symbols: Map<string, string> }) {

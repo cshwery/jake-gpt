@@ -215,8 +215,50 @@ export type LayoutResult = {
   }>;
   paths: Array<{ path_id: string; grid_cells: string[]; width_ft: number; notes?: string | null }>;
   score_breakdown: Record<string, number>;
+  design_plan?: PlantingDesignPlan | null;
   warnings: string[];
   explanations: string[];
+  assumptions: string[];
+};
+
+export type PlantingDesignPlan = {
+  organization_style: string;
+  summary: string;
+  plant_roles: Array<{ plant_slug: string; cultivar_slug?: string | null; role: string; rationale: string }>;
+  plant_groups: Array<{
+    group_id: string;
+    group_type: string;
+    primary_plants: string[];
+    support_plants: string[];
+    placement_strategy: string;
+    notes: string[];
+  }>;
+  companion_clusters: Array<{
+    cluster_id: string;
+    anchor_plant_slug: string;
+    companion_plant_slugs: string[];
+    border_plant_slugs: string[];
+    filler_plant_slugs: string[];
+    rationale: string;
+    placement_guidance: string;
+  }>;
+  pollinator_border: string[];
+  separation_rules: Array<{
+    plant_slugs: string[];
+    relationship_type: string;
+    severity: string;
+    placement_guidance: string;
+    rationale: string;
+  }>;
+  placement_guidance: {
+    rows_guidance: string[];
+    raised_beds_guidance: string[];
+    chaos_guidance: string[];
+    north_south_guidance: string[];
+    border_guidance: string[];
+    spacing_guidance: string[];
+  };
+  warnings: string[];
   assumptions: string[];
 };
 

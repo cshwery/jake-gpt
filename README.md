@@ -24,6 +24,32 @@ This branch is a viable V0, not a production release.
 - Optional local service: Redis
 - Backend package manager: `uv`
 
+## Architecture
+
+JakeGPT remains a single-repo modular monolith. Keep `backend/`, `frontend/`, `infra/`, and `docs/` together while the product boundaries are still evolving. Do not split engines into separate repositories yet.
+
+Backend engines are logically separated under `backend/app/engines/`, with compatibility imports kept under `backend/app/services/` while the codebase migrates gradually. The main deterministic flow is:
+
+```text
+GardenContextDTO
+-> GardenRecommendationResult
+-> PlantingDesignPlan
+-> LayoutResult
+-> future ActionPlan
+```
+
+The Planting Design layer sits between recommendations and layout. It assigns plant roles, builds companion clusters, creates pollinator-border guidance, and produces gardener-friendly separation rules before the layout renderer decides how to show rows, raised beds, grid/mixed layouts, or chaos guidance.
+
+Planting design concepts:
+
+- Plant roles: primary crops, companion herbs, pollinator flowers, border plants, filler crops, trellised crops, tall crops, sprawling crops, leafy greens, root crops, perennials, trees, shrubs, and plants to isolate.
+- Companion clusters: explainable groups such as tomato with basil nearby and marigolds repeated along bed edges or row ends.
+- Separation rules: user-facing keep-apart guidance for disease risk, pest risk, allelopathy, competition, aggressive spreaders such as mint, and crops like fennel that are best isolated.
+- Chaos mode: advisory guidance rather than a detailed placement map. It emphasizes resilient, lower-maintenance, direct-sow-friendly plants, pollinator support, and separation warnings.
+- Raised-bed tree behavior: trees are not recommended for raised beds unless cultivar data confirms a dwarf or compact variety.
+
+The future Action Plan engine should consume `LayoutResult` and `PlantingDesignPlan`, but watering calendars, planting calendars, shopping lists, affiliate links, and nursery commerce are intentionally out of scope for the current V0 work.
+
 ## Local Setup
 
 Start infrastructure:

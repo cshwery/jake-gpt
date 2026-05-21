@@ -34,6 +34,43 @@ describe("GardenLayoutGrid", () => {
             { plant_slug: "basil", plant_common_name: "Basil", quantity: 2, grid_cells: ["A2"], row: 1, col: 0, width: 1, height: 1, x_pct: 25, y_pct: 75, warnings: [], placement_role: "companion" }
           ],
           paths: [],
+          design_plan: {
+            organization_style: "rows",
+            summary: "Planting design uses rows organization. 1 companion cluster identified.",
+            plant_roles: [],
+            plant_groups: [],
+            companion_clusters: [
+              {
+                cluster_id: "cluster-tomato",
+                anchor_plant_slug: "tomato",
+                companion_plant_slugs: ["basil"],
+                border_plant_slugs: ["marigold"],
+                filler_plant_slugs: [],
+                rationale: "Tomato has nearby support plants.",
+                placement_guidance: "Keep companion herbs in adjacent rows or interplanted notes near Tomato; use flowers at row ends."
+              }
+            ],
+            pollinator_border: ["marigold"],
+            separation_rules: [
+              {
+                plant_slugs: ["tomato", "potato"],
+                relationship_type: "same_family",
+                severity: "medium",
+                placement_guidance: "do_not_cluster",
+                rationale: "Tomatoes and potatoes may share disease pressure. Do not cluster them together."
+              }
+            ],
+            placement_guidance: {
+              rows_guidance: ["Tall crops are placed toward the north.", "Flowers are used at row ends and borders."],
+              raised_beds_guidance: [],
+              chaos_guidance: [],
+              north_south_guidance: ["Place tall crops toward the north edge so they shade smaller crops less."],
+              border_guidance: ["Use flowers as repeated border/support plants instead of one isolated block."],
+              spacing_guidance: []
+            },
+            warnings: [],
+            assumptions: []
+          },
           score_breakdown: {
             spacing_score: 10,
             companion_score: 20,
@@ -55,6 +92,9 @@ describe("GardenLayoutGrid", () => {
     expect(screen.getByText("Each cell = 2 ft × 2 ft")).toBeTruthy();
     expect(screen.getByText("Test layout")).toBeTruthy();
     expect(screen.getByText("Good Layout")).toBeTruthy();
+    expect(screen.getByText("Planting design")).toBeTruthy();
+    expect(screen.getByText(/Keep companion herbs/)).toBeTruthy();
+    expect(screen.getByText(/Do not cluster them together/)).toBeTruthy();
     expect(screen.getAllByText("A1").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Tomato").length).toBeGreaterThan(0);
   });

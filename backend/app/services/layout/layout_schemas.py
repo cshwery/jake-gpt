@@ -2,6 +2,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.engines.planting_design.schemas import PlantingDesignPlan
 from app.schemas.plan import PlanItemRead
 
 
@@ -137,6 +138,7 @@ class LayoutResult(BaseModel):
     placements: list[LayoutPlacementDTO]
     paths: list[LayoutPathDTO] = Field(default_factory=list)
     score_breakdown: LayoutScoreBreakdown = Field(default_factory=LayoutScoreBreakdown)
+    design_plan: PlantingDesignPlan | None = None
     warnings: list[str] = Field(default_factory=list)
     explanations: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
