@@ -99,7 +99,15 @@ class GridBuilder:
             for row in range(rows)
             for col in range(cols)
         ]
-        return GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, layout_style="rows", cells=cells, access_paths=["rows run west to east; row 1 is the northern row"])
+        return GardenGrid(
+            rows=rows,
+            cols=cols,
+            cell_size_ft=cell_size_ft,
+            layout_style="rows",
+            layout_metadata={"row_direction": "west_to_east", "north_reference": "row 1 is the northern row"},
+            cells=cells,
+            access_paths=["rows run west to east; row 1 is the northern row"],
+        )
 
     def _build_raised_bed_grid(self, plant_count: int, cell_size_ft: float, options: LayoutOptions) -> GardenGrid:
         bed_setup = options.raised_beds or {}
@@ -141,7 +149,20 @@ class GridBuilder:
                         )
                     )
         access_paths = [f"{bed_count} raised bed{'s' if bed_count != 1 else ''}; paths shown between beds"]
-        return GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, layout_style="raised_beds", cells=cells, access_paths=access_paths)
+        return GardenGrid(
+            rows=rows,
+            cols=cols,
+            cell_size_ft=cell_size_ft,
+            layout_style="raised_beds",
+            layout_metadata={
+                "bed_count": bed_count,
+                "bed_width_ft": bed_width_ft,
+                "bed_length_ft": bed_length_ft,
+                "north_reference": "top of each bed drawing represents north",
+            },
+            cells=cells,
+            access_paths=access_paths,
+        )
 
 
 def _area_sq_ft(garden: Garden | None, garden_context: Any | None) -> float:

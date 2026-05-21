@@ -48,6 +48,7 @@ class GardenGrid(BaseModel):
     cell_size_ft: float = 2
     orientation: str = "north_up"
     layout_style: str = "grid"
+    layout_metadata: dict[str, Any] = Field(default_factory=dict)
     cells: list[GridCell] = Field(default_factory=list)
     access_paths: list[str] = Field(default_factory=list)
 
@@ -194,6 +195,7 @@ class LayoutResult(BaseModel):
             "cell_size_ft": self.grid.cell_size_ft,
             "orientation": self.grid.orientation,
             "layout_style": self.grid.layout_style,
+            "layout_metadata": self.grid.layout_metadata,
             "cells": [cell.model_dump(mode="json") for cell in self.grid.cells],
             "access_paths": self.grid.access_paths,
         }

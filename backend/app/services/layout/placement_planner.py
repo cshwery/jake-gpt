@@ -90,7 +90,36 @@ class PlacementPlanner:
         cultivar_by_plant = {cultivar.plant_id: cultivar for cultivar in cultivars or []}
         placements: list[LayoutPlacementDTO] = []
         warnings: list[str] = []
-        for row, plant in enumerate(plants[: grid.rows]):
+        row_crops = [plant for plant in plants if not _is_large_woody(plant)]
+        woody_plants = [plant for plant in plants if _is_large_woody(plant)]
+        for index, plant in enumerate(woody_plants):
+            cultivar = cultivar_by_plant.get(plant.id)
+            spacing, row_spacing = spacing_for(plant, cultivar)
+            quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+            role = _placement_role(plant, companion_graph)
+            warnings.extend(quantity_warnings)
+            placements.append(
+                LayoutPlacementDTO(
+                    plant_id=plant.id,
+                    plant_slug=_plant_slug(plant),
+                    plant_common_name=plant.common_name,
+                    cultivar_id=cultivar.id if cultivar else None,
+                    cultivar_slug=cultivar.slug if cultivar else None,
+                    cultivar_name=cultivar.cultivar_name if cultivar else None,
+                    quantity=quantity,
+                    grid_cells=[],
+                    row=None,
+                    col=None,
+                    x_pct=12 + index * 12,
+                    y_pct=12,
+                    spacing_inches=spacing,
+                    row_spacing_inches=row_spacing,
+                    placement_role=role,
+                    location_notes=f"Place outside the crop rows where it has room to reach mature size. Allow about {spacing} in spacing.",
+                    warnings=quantity_warnings,
+                )
+            )
+        for row, plant in enumerate(row_crops[: grid.rows]):
             row_cells = [cell for cell in grid.cells if cell.row == row and cell.available and not cell.is_path]
             if not row_cells:
                 warnings.append(f"No row remained for {plant.common_name.title()}; quantity was reduced to zero.")
@@ -125,11 +154,11 @@ class PlacementPlanner:
                     spacing_inches=spacing,
                     row_spacing_inches=row_spacing,
                     placement_role=role,
-                    location_notes=f"Dedicated row; {spacing} in in-row spacing and {row_spacing} in between rows.",
+                    location_notes=f"{'First row at the north edge' if row == 0 else f'{row_spacing} in from prior row'}; {spacing} in in-row spacing.",
                     warnings=quantity_warnings,
                 )
             )
-        if len(plants) > grid.rows:
+        if len(row_crops) > grid.rows:
             warnings.append("Some selected plants did not fit into the available row count.")
         return placements, warnings
 

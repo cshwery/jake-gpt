@@ -32,6 +32,7 @@ export default function Home() {
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedPlants, setSelectedPlants] = useState<SelectedPlantItem[]>([]);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [savingGarden, setSavingGarden] = useState(false);
   const [goals, setGoals] = useState<GardenGoals>({
     goal: "Food",
     goals: ["food"],
@@ -133,18 +134,23 @@ export default function Home() {
     }
   }
 
-  async function saveGardenBoundary() {
-    if (!property || !draftPolygon) return;
+  async function saveGardenBoundary(continueAfterSave = false) {
+    const polygon = draftPolygon ?? garden?.polygon_geojson ?? null;
+    if (!property || !polygon) return;
     setError(null);
+    setSavingGarden(true);
     try {
       const created = await api.request<GardenRead>("/gardens", {
         method: "POST",
-        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: draftPolygon })
+        body: JSON.stringify({ property_id: property.id, name: "Primary Garden", polygon_geojson: polygon })
       });
       setGarden(created);
       setDraftAreaSqM(created.area_sq_m);
+      if (continueAfterSave) setStep("context");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Garden save failed");
+    } finally {
+      setSavingGarden(false);
     }
   }
 
@@ -336,7 +342,7 @@ export default function Home() {
         {step === "login" ? <LoginForm onSubmit={handleLogin} /> : null}
         {step === "address" ? <AddressForm onSubmit={handleAddress} geocode={geocode} onConfirm={confirmProperty} /> : null}
         {step === "map" && property ? (
-          <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
+          <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
             <GardenMap
               property={property}
               garden={garden}
@@ -348,29 +354,20 @@ export default function Home() {
                 setDraftPolygon(null);
                 setDraftAreaSqM(null);
               }}
-              onSaveBoundary={saveGardenBoundary}
-              canSaveBoundary={Boolean(draftPolygon)}
+              canSaveBoundary={Boolean(draftPolygon ?? garden?.polygon_geojson)}
             />
-            <Card>
-              <h2 className="mb-2 text-lg font-semibold">Draw Map</h2>
-              <ol className="mb-4 list-inside list-decimal space-y-1 text-sm text-foreground/70">
-                <li>Confirm property</li>
-                <li>Zoom in to your yard</li>
-                <li>Draw the actual planting area</li>
-                <li>Confirm size and save</li>
-              </ol>
+            <Card className="self-start">
+              <h2 className="mb-3 text-lg font-semibold">Draw Map</h2>
+              <DrawMapStepPanel hasPolygon={Boolean(draftPolygon ?? garden?.polygon_geojson)} hasSavedGarden={Boolean(garden)} />
               <div className="mb-4 rounded-md border border-border bg-muted/40 p-3 text-sm">
                 <div className="text-xs font-medium uppercase text-foreground/50">Confirmed property</div>
                 <div>{property.normalized_address}</div>
               </div>
               <AreaPanel areaSqM={draftAreaSqM ?? garden?.area_sq_m ?? null} />
-              <Button className="mt-4 w-full" disabled={!draftPolygon} onClick={saveGardenBoundary}>Save Garden Boundary</Button>
-              {garden ? (
-                <div className="space-y-2 text-sm">
-                  <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3">Saved backend area: {garden.area_sq_ft.toFixed(0)} sq ft</div>
-                  <Button className="mt-4 w-full" onClick={() => setStep("context")}>Continue to Garden Context</Button>
-                </div>
-              ) : null}
+              {garden ? <div className="mt-4 rounded-md border border-primary/20 bg-primary/10 p-3 text-sm">Saved area: {garden.area_sq_ft.toFixed(0)} sq ft</div> : null}
+              <Button className="mt-4 w-full" disabled={savingGarden || !Boolean(draftPolygon ?? garden?.polygon_geojson)} onClick={() => saveGardenBoundary(true)}>
+                {savingGarden ? "Saving..." : "Save and Continue"}
+              </Button>
             </Card>
           </div>
         ) : null}
@@ -391,10 +388,10 @@ export default function Home() {
           />
         ) : null}
         {step === "layout" && property && garden && layout ? (
-          <LayoutScreen property={property} garden={garden} layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
+          <LayoutScreen layout={layout} onRegenerate={() => generateLayout("layout")} onContinue={generatePlan} onBack={() => setStep("plants")} />
         ) : null}
         {step === "plan" && property && garden && plan && layout ? (
-          <PlanScreen property={property} garden={garden} layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
+          <PlanScreen layout={layout} plan={plan} onRegenerate={generatePlan} onContinue={() => setStep("plants")} onBack={() => setStep("layout")} onSave={savePlan} />
         ) : null}
       </section>
     </main>
@@ -454,6 +451,28 @@ function AreaPanel({ areaSqM }: { areaSqM: number | null }) {
   );
 }
 
+function DrawMapStepPanel({ hasPolygon, hasSavedGarden }: { hasPolygon: boolean; hasSavedGarden: boolean }) {
+  const steps = [
+    { label: "Confirm property", active: false, complete: true, detail: "Use the satellite map to make sure the pin is centered on the right yard." },
+    { label: "Draw planting area", active: !hasPolygon, complete: hasPolygon, detail: "Draw only the space where plants will go. Skip patios, lawn, paths, and buildings." },
+    { label: "Save and continue", active: hasPolygon, complete: hasSavedGarden, detail: hasPolygon ? "Save the boundary and move to Garden Context." : "This unlocks after a garden boundary exists." }
+  ];
+  return (
+    <div className="mb-4 space-y-2">
+      {steps.map((item, index) => (
+        <div key={item.label} className={`rounded-md border p-3 text-sm ${item.active ? "border-primary bg-primary/10" : item.complete ? "border-emerald-200 bg-emerald-50" : "border-border bg-muted/30"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="font-semibold">Step {index + 1}: {item.label}</div>
+            <div className="text-xs text-foreground/60">{item.complete ? "Done" : item.active ? "Current" : "Next"}</div>
+          </div>
+          {item.active ? <div className="mt-1 text-foreground/70">{item.detail}</div> : null}
+        </div>
+      ))}
+      <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-foreground/70">Tip: most backyard beds are 25-500 sq ft. Zoom in before drawing corners.</div>
+    </div>
+  );
+}
+
 function ContextForm({
   garden,
   context,
@@ -505,9 +524,16 @@ function ContextForm({
         <ContextList title="Warnings" items={context.warnings} tone="warning" />
       ) : null}
       <div className="flex flex-wrap gap-2">
-        <Button onClick={context ? onRecalculate : onSave}>{context ? "Recalculate Context" : "Calculate Context"}</Button>
-        {context ? <Button className="bg-accent text-foreground" onClick={onContinue}>Continue to Goals & Setup</Button> : null}
+        {!context ? <Button onClick={onSave}>Calculate Context</Button> : null}
+        {context ? <Button onClick={onContinue}>Continue to Goals & Setup</Button> : null}
       </div>
+      {context ? (
+        <details className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
+          <summary className="cursor-pointer font-semibold">Advanced estimates</summary>
+          <p className="mt-2 text-foreground/70">Use this if you changed the garden boundary or sunlight estimate.</p>
+          <Button className="mt-3 bg-muted text-foreground" onClick={onRecalculate}>Refresh estimates</Button>
+        </details>
+      ) : null}
     </Card>
   );
 }
@@ -832,15 +858,11 @@ function PlantCard({ plant, selected, onToggle }: { plant: PlantSearchResult; se
 }
 
 function LayoutScreen({
-  property,
-  garden,
   layout,
   onRegenerate,
   onContinue,
   onBack
 }: {
-  property: PropertyRead;
-  garden: GardenRead;
   layout: LayoutResult;
   onRegenerate: () => void;
   onContinue: () => void;
@@ -849,7 +871,6 @@ function LayoutScreen({
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-5">
-        <GardenMap property={property} garden={garden} layout={layout} />
         <GardenLayoutGrid layout={layout} title="Layout" />
       </div>
       <Card>
@@ -879,8 +900,6 @@ function LayoutScreen({
 }
 
 function PlanScreen({
-  property,
-  garden,
   layout,
   plan,
   onRegenerate,
@@ -888,8 +907,6 @@ function PlanScreen({
   onBack,
   onSave
 }: {
-  property: PropertyRead;
-  garden: GardenRead;
   layout: LayoutResult;
   plan: GeneratedPlan;
   onRegenerate: () => void;
@@ -900,7 +917,6 @@ function PlanScreen({
   return (
     <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
       <div className="space-y-5">
-        <GardenMap property={property} garden={garden} layout={layout} />
         <GardenLayoutGrid layout={layout} title="Plan" />
       </div>
       <Card>

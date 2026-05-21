@@ -1,10 +1,12 @@
 import React from "react";
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { PlantSelectionPanel } from "./PlantSelectionPanel";
 import type { GardenGoals, GardenRecommendationResult, PlantSearchResult } from "@/types/api";
 import { selectionKeyForPlantResult } from "@/lib/plantSelection";
+
+afterEach(cleanup);
 
 function species(id = 1, slug = "tomato", commonName = "tomato"): PlantSearchResult {
   return {
@@ -122,6 +124,26 @@ function recommendationResult(): GardenRecommendationResult {
   };
 }
 
+function warningRecommendationResult(): GardenRecommendationResult {
+  return {
+    ...recommendationResult(),
+    warnings: [
+      {
+        warning_type: "disease_risk",
+        plant_slugs: ["tomato", "pepper"],
+        severity: "medium",
+        message: "Nightshade crops can share disease and pest pressure; close clustering should be flagged as a risk rather than a beneficial pairing."
+      }
+    ],
+    recommendations: [
+      {
+        ...recommendationResult().recommendations[0],
+        warnings: ["Nightshade crops can share disease and pest pressure; close clustering should be flagged as a risk rather than a beneficial pairing."]
+      }
+    ]
+  };
+}
+
 describe("PlantSelectionPanel", () => {
   it("adds only the clicked species", () => {
     render(<Harness plantResults={[species(), species(2, "basil", "basil")]} />);
@@ -168,5 +190,12 @@ describe("PlantSelectionPanel", () => {
     render(<Harness plantResults={[species()]} />);
 
     expect(screen.getAllByText(/Pick plants you definitely want to include/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders recommendation warnings as gardener-facing copy", () => {
+    render(<Harness plantResults={[species()]} recommendations={warningRecommendationResult()} />);
+
+    expect(screen.getAllByText(/Tomatoes, peppers, eggplants, and potatoes are all nightshades/i).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/flagged as a risk/i)).toBeNull();
   });
 });

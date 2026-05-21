@@ -191,6 +191,7 @@ export type LayoutResult = {
       notes: string[];
     }>;
     layout_style?: string;
+    layout_metadata?: Record<string, unknown>;
     access_paths: string[];
   };
   placements: Array<{

@@ -148,11 +148,30 @@ def test_row_layout_places_each_plant_in_a_planting_row() -> None:
     )
 
     assert result.grid.layout_style == "rows"
+    assert result.grid.layout_metadata["row_direction"] == "west_to_east"
     assert result.grid.rows == len(plants)
     assert result.paths == []
     assert result.placements[0].width > 1
     assert all(cell.group_label and cell.group_label.startswith("Row") for cell in result.grid.cells)
     assert "Row layout" in result.summary
+
+
+def test_row_layout_separates_trees_and_shrubs_from_crop_rows() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "basil"), _plant(3, "apple", tree=True), _plant(4, "blueberry", shrub=True)]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=480),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=480, sunlight_category="full_sun"),
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="rows"),
+    )
+
+    row_crops = [placement for placement in result.placements if placement.placement_role not in {"tree", "shrub"}]
+    woody = [placement for placement in result.placements if placement.placement_role in {"tree", "shrub"}]
+    assert {placement.plant_slug for placement in row_crops} == {"tomato", "basil"}
+    assert {placement.plant_slug for placement in woody} == {"apple", "blueberry"}
+    assert all(not placement.grid_cells for placement in woody)
+    assert all(placement.row is None for placement in woody)
 
 
 def test_raised_bed_layout_groups_cells_by_bed_and_mixes_plants() -> None:
@@ -173,6 +192,8 @@ def test_raised_bed_layout_groups_cells_by_bed_and_mixes_plants() -> None:
 
     bed_cells = [cell for cell in result.grid.cells if cell.group_id and cell.group_id.startswith("bed-")]
     assert result.grid.layout_style == "raised_beds"
+    assert result.grid.layout_metadata["bed_length_ft"] == 4
+    assert result.grid.layout_metadata["bed_width_ft"] == 2
     assert {cell.group_label for cell in bed_cells} == {"Bed 1", "Bed 2"}
     assert any(cell.is_path for cell in result.grid.cells)
     assert all("Bed" in (placement.location_notes or "") for placement in result.placements)
@@ -236,14 +257,14 @@ def _garden(area: float = 240):
     return SimpleNamespace(id=7, area_sq_ft=area)
 
 
-def _plant(id: int, slug: str, spacing: int = 12, row_spacing: int = 18, tree: bool = False, flower: bool = False):
+def _plant(id: int, slug: str, spacing: int = 12, row_spacing: int = 18, tree: bool = False, flower: bool = False, shrub: bool = False):
     return SimpleNamespace(
         id=id,
         slug=slug,
         common_name=slug.replace("_", " "),
         tree=tree,
         is_tree=tree,
-        is_shrub=False,
+        is_shrub=shrub,
         flower=flower,
         ornamental=flower,
         edible=not flower,

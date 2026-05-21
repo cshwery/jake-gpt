@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { useEffect, useRef, useState } from "react";
 import area from "@turf/area";
 import bbox from "@turf/bbox";
@@ -241,7 +242,7 @@ export function GardenMap({ property, garden, generatedPlan, layout, dimmed = fa
   if (!token) {
     return (
       <div
-        className="relative h-[520px] touch-none overflow-hidden rounded-lg border border-border bg-[linear-gradient(135deg,#44523b_0%,#87906a_40%,#384331_41%,#6d7656_70%,#2d3b2f_100%)]"
+        className="relative h-[680px] touch-none overflow-hidden rounded-lg border border-border bg-[linear-gradient(135deg,#44523b_0%,#87906a_40%,#384331_41%,#6d7656_70%,#2d3b2f_100%)]"
         onPointerDown={startLasso}
         onPointerMove={moveLasso}
         onPointerUp={finishLasso}
@@ -253,7 +254,6 @@ export function GardenMap({ property, garden, generatedPlan, layout, dimmed = fa
         </div>
         <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
         <PolygonOverlay polygon={localPolygon} draftPoints={draftPoints} />
-        {layout ? <LayoutOverlay layout={layout} polygon={localPolygon} /> : generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={localPolygon} /> : null}
         {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setDrawMode} clearDrawing={clearDrawing} finishPolygon={() => completeMockPolygon(draftPoints)} canFinish={draftPoints.length >= 3} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={() => undefined} zoomToGarden={() => undefined} hasGarden={Boolean(garden || localPolygon)} /> : null}
       </div>
     );
@@ -261,7 +261,7 @@ export function GardenMap({ property, garden, generatedPlan, layout, dimmed = fa
 
   return (
     <div className="relative">
-      <div ref={container} className="h-[520px] rounded-lg border border-border" />
+      <div ref={container} className="h-[680px] rounded-lg border border-border" />
       {drawMode === "lasso" ? (
         <div
           className="absolute inset-0 touch-none"
@@ -274,7 +274,6 @@ export function GardenMap({ property, garden, generatedPlan, layout, dimmed = fa
       ) : null}
       {dimmed ? <div className="pointer-events-none absolute inset-0 rounded-lg bg-white/45" /> : null}
       <MapAreaReadout areaSqFt={areaSqFt} zoom={zoom} />
-      {layout ? <LayoutOverlay layout={layout} polygon={garden?.polygon_geojson ?? localPolygon} /> : generatedPlan ? <PlanOverlay plan={generatedPlan} polygon={garden?.polygon_geojson ?? localPolygon} /> : null}
       {onPolygon ? <DrawingToolbar mode={drawMode} setMode={setMapboxMode} clearDrawing={clearDrawing} finishPolygon={() => undefined} canFinish={false} onSaveBoundary={onSaveBoundary} canSaveBoundary={canSaveBoundary} zoomToProperty={zoomToProperty} zoomToGarden={zoomToGarden} hasGarden={Boolean(garden || localPolygon)} /> : null}
     </div>
   );
@@ -283,11 +282,8 @@ export function GardenMap({ property, garden, generatedPlan, layout, dimmed = fa
 function MapAreaReadout({ areaSqFt, zoom }: { areaSqFt: number | null; zoom: number }) {
   const warning = areaSqFt ? areaWarning(areaSqFt) : null;
   return (
-    <div className="absolute right-4 top-4 max-w-xs rounded-md bg-white/95 p-3 text-xs shadow">
-      <div className="font-semibold">Step 1: Confirm property and zoom in</div>
-      <div className="mt-1 text-foreground/70">Click each corner of the garden polygon. Draw only the actual planting area, not the whole property.</div>
-      <div className="mt-2 rounded border border-border bg-muted/40 px-2 py-1">Tip: most backyard beds are 25-500 sq ft.</div>
-      <div className="mt-2 font-medium">{formatArea(areaSqFt)}</div>
+    <div className="absolute right-4 top-4 max-w-[180px] rounded-md bg-white/90 px-3 py-2 text-xs shadow">
+      <div className="font-semibold">{formatArea(areaSqFt)}</div>
       {areaSqFt ? <div className="text-foreground/60">{areaCategory(areaSqFt)}</div> : null}
       <div className="mt-1 text-foreground/60">North ↑ · zoom {zoom.toFixed(1)}</div>
       {warning ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-900">{warning}</div> : null}
@@ -336,7 +332,6 @@ function DrawingToolbar({
       </Button>
       <Button className="bg-muted text-foreground" onClick={(event) => { event.stopPropagation(); zoomToProperty(); }}>Zoom to property</Button>
       <Button className="bg-muted text-foreground" disabled={!hasGarden} onClick={(event) => { event.stopPropagation(); zoomToGarden(); }}>Zoom to garden</Button>
-      {onSaveBoundary ? <Button disabled={!canSaveBoundary} onClick={(event) => { event.stopPropagation(); onSaveBoundary(); }}>Save garden boundary</Button> : null}
     </div>
   );
 }

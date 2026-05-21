@@ -27,6 +27,8 @@ type NormalizedCell = {
   group_label?: string | null;
 };
 
+type NormalizedPlacement = LayoutResult["placements"][number];
+
 export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", showLegend = true, className = "" }: Props) {
   const normalized = layout ? normalizeLayout(layout) : normalizePlan(generatedPlan);
   if (normalized == null) {
@@ -65,9 +67,9 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
         <div>
           <div className="mb-2 text-xs font-medium uppercase text-foreground/50">North ↑</div>
           {normalized.grid.layout_style === "rows" ? (
-            <RowLayoutView cells={normalized.grid.cells} placements={normalized.placements} />
+            <RowLayoutView placements={normalized.placements} />
           ) : normalized.grid.layout_style === "raised_beds" ? (
-            <RaisedBedsView cells={normalized.grid.cells} placements={normalized.placements} cols={normalized.grid.cols} />
+            <RaisedBedsView cells={normalized.grid.cells} placements={normalized.placements} metadata={normalized.grid.layout_metadata} />
           ) : (
             <GridLayoutView cells={normalized.grid.cells} placements={normalized.placements} cols={normalized.grid.cols} />
           )}
@@ -133,7 +135,7 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
 
 function normalizeLayout(layout: LayoutResult) {
   return {
-    grid: { ...layout.grid, layout_style: layout.grid.layout_style ?? "grid" },
+    grid: { ...layout.grid, layout_style: layout.grid.layout_style ?? "grid", layout_metadata: layout.grid.layout_metadata ?? {} },
     placements: layout.placements,
     score_breakdown: layout.score_breakdown,
     warnings: layout.warnings ?? [],
@@ -172,6 +174,7 @@ function normalizePlan(plan?: GeneratedPlan | null) {
       cell_size_ft: 2,
       orientation: "north_up",
       layout_style: "grid",
+      layout_metadata: {},
       cells,
       access_paths: plan.layout_grid.access_paths ?? []
     },
@@ -251,22 +254,63 @@ function GridLayoutView({ cells, placements, cols }: { cells: NormalizedCell[]; 
   );
 }
 
-function RowLayoutView({ cells, placements }: { cells: NormalizedCell[]; placements: LayoutResult["placements"] }) {
-  const rows = Array.from(new Set(cells.map((cell) => cell.row))).sort((a, b) => a - b);
+function RowLayoutView({ placements }: { placements: LayoutResult["placements"] }) {
+  const rowPlacements = placements.filter((item) => item.placement_role !== "tree" && item.placement_role !== "shrub").sort((a, b) => (a.row ?? 0) - (b.row ?? 0));
+  const woodyPlacements = placements.filter((item) => item.placement_role === "tree" || item.placement_role === "shrub");
+  const rowSymbols = buildSymbolMap(rowPlacements);
+  const woodySymbols = buildTreeBushSymbolMap(woodyPlacements);
   return (
-    <div className="space-y-2">
-      {rows.map((row) => {
-        const rowCells = cells.filter((cell) => cell.row === row).sort((a, b) => a.col - b.col);
-        const placement = placements.find((item) => item.row === row || item.grid_cells.some((cellId) => rowCells.some((cell) => cell.cell_id === cellId)));
+    <div className="space-y-4">
+      {woodyPlacements.length ? <TreeBushLegend placements={woodyPlacements} symbols={woodySymbols} /> : null}
+      <div className="rounded-md border border-border bg-white p-3">
+        <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+          <div className="font-semibold">Row diagram</div>
+          <div className="text-xs text-foreground/60">North ↑ · rows run west to east</div>
+        </div>
+        <RowDiagram rows={rowPlacements} rowSymbols={rowSymbols} woody={woodyPlacements} woodySymbols={woodySymbols} />
+      </div>
+      <div className="rounded-md border border-border bg-muted/20 p-3">
+        <div className="mb-2 font-semibold">Rows</div>
+        <div className="space-y-2 text-sm">
+          {rowPlacements.map((placement, index) => (
+            <div key={`${placement.plant_slug}-${placement.row}`} className="flex flex-wrap items-center justify-between gap-3 rounded border border-border bg-white px-3 py-2">
+              <div className="font-medium">Row {index + 1} — {displayPlacementName(placement)}</div>
+              <div className="text-foreground/70">{index === 0 ? "start at north edge" : `${placement.row_spacing_inches ?? 0} in from prior row`} · {placement.spacing_inches ?? 0} in in-row</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RaisedBedsView({ cells, placements, metadata }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; metadata?: Record<string, unknown> }) {
+  const groups = Array.from(new Set(cells.map((cell) => cell.group_id ?? "ungrouped"))).filter((group) => group !== "path" && group !== "ungrouped");
+  if (!groups.length) return <GridLayoutView cells={cells} placements={placements} cols={4} />;
+  const symbols = buildSymbolMap(placements);
+  const bedLength = numberMetadata(metadata, "bed_length_ft", 8);
+  const bedWidth = numberMetadata(metadata, "bed_width_ft", 4);
+  return (
+    <div className="grid gap-4 xl:grid-cols-2">
+      {groups.map((group) => {
+        const bedCells = cells.filter((cell) => cell.group_id === group).sort((a, b) => a.row - b.row || a.col - b.col);
+        const bedPlacements = placements.filter((placement) => placement.grid_cells.some((cellId) => bedCells.some((cell) => cell.cell_id === cellId)));
+        const notes = uniqueStrings(bedPlacements.flatMap((placement) => placement.location_notes ? [placement.location_notes] : []));
+        const warnings = uniqueStrings(bedPlacements.flatMap((placement) => placement.warnings ?? []));
         return (
-          <div key={row} className="rounded-md border border-border bg-muted/20 p-2">
-            <div className="mb-1 flex items-center justify-between gap-2 text-xs">
-              <span className="font-semibold">{rowCells[0]?.group_label ?? `Row ${row + 1}`}</span>
-              {placement ? <span className="text-foreground/60">{displayPlacementName(placement)} · {placement.quantity} plantings</span> : null}
+          <div key={group} className="rounded-md border border-emerald-200 bg-emerald-50/30 p-4">
+            <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+              <div className="text-base font-semibold">{bedCells[0]?.group_label ?? titleCase(group)}</div>
+              <div className="text-sm text-foreground/70">{bedWidth} ft × {bedLength} ft</div>
             </div>
-            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${rowCells.length}, minmax(0, 1fr))` }}>
-              {rowCells.map((cell) => <LayoutCell key={cell.cell_id} cell={cell} role={cell.placement_role ?? inferRole(cell, placements)} compact />)}
-            </div>
+            <PlantSymbolLegend placements={bedPlacements} symbols={symbols} />
+            <RaisedBedSvg cells={bedCells} placements={bedPlacements} symbols={symbols} widthFt={bedWidth} lengthFt={bedLength} />
+            {notes.length || warnings.length ? (
+              <div className="mt-3 space-y-1 text-xs text-foreground/70">
+                {notes.slice(0, 3).map((note) => <div key={note}>{note}</div>)}
+                {warnings.map((warning) => <div key={warning} className="text-amber-800">{warning}</div>)}
+              </div>
+            ) : null}
           </div>
         );
       })}
@@ -274,28 +318,82 @@ function RowLayoutView({ cells, placements }: { cells: NormalizedCell[]; placeme
   );
 }
 
-function RaisedBedsView({ cells, placements, cols }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; cols: number }) {
-  const groups = Array.from(new Set(cells.map((cell) => cell.group_id ?? "ungrouped"))).filter((group) => group !== "path" && group !== "ungrouped");
-  if (!groups.length) return <GridLayoutView cells={cells} placements={placements} cols={cols} />;
+function RaisedBedSvg({ cells, placements, symbols, widthFt, lengthFt }: { cells: NormalizedCell[]; placements: NormalizedPlacement[]; symbols: Map<string, string>; widthFt: number; lengthFt: number }) {
+  const rows = Array.from(new Set(cells.map((cell) => cell.row))).sort((a, b) => a - b);
+  const cols = Array.from(new Set(cells.map((cell) => cell.col))).sort((a, b) => a - b);
   return (
-    <div className="space-y-3">
-      {groups.map((group) => {
-        const bedCells = cells.filter((cell) => cell.group_id === group).sort((a, b) => a.row - b.row || a.col - b.col);
-        const bedRows = Array.from(new Set(bedCells.map((cell) => cell.row))).sort((a, b) => a - b);
+    <svg className="mt-3 h-56 w-full rounded border border-emerald-300 bg-white" viewBox="0 0 240 150" role="img" aria-label={`Raised bed ${widthFt} ft by ${lengthFt} ft`}>
+      <text x="12" y="18" className="fill-slate-700 text-[10px] font-semibold">North ↑</text>
+      <text x="228" y="18" textAnchor="end" className="fill-slate-500 text-[9px]">{widthFt} ft × {lengthFt} ft</text>
+      <rect x="18" y="30" width="204" height="104" rx="3" fill="#f7fee7" stroke="#15803d" strokeWidth="2" />
+      {cells.filter((cell) => cell.label).map((cell) => {
+        const colIndex = cols.indexOf(cell.col);
+        const rowIndex = rows.indexOf(cell.row);
+        const x = 34 + (colIndex + 0.5) * (172 / Math.max(cols.length, 1));
+        const y = 46 + (rowIndex + 0.5) * (72 / Math.max(rows.length, 1));
         return (
-          <div key={group} className="rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
-            <div className="mb-2 text-sm font-semibold">{bedCells[0]?.group_label ?? titleCase(group)}</div>
-            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
-              {bedRows.flatMap((row) =>
-                bedCells
-                  .filter((cell) => cell.row === row)
-                  .sort((a, b) => a.col - b.col)
-                  .map((cell) => <LayoutCell key={cell.cell_id} cell={cell} role={cell.placement_role ?? inferRole(cell, placements)} compact />)
-              )}
-            </div>
-          </div>
+          <g key={cell.cell_id}>
+            <circle cx={x} cy={y} r="12" fill="#dcfce7" stroke="#16a34a" />
+            <text x={x} y={y + 3} textAnchor="middle" className="fill-slate-900 text-[10px] font-bold">{symbolForCell(cell, placements, symbols)}</text>
+          </g>
         );
       })}
+      <text x="120" y="146" textAnchor="middle" className="fill-slate-500 text-[8px]">Top of bed represents north</text>
+    </svg>
+  );
+}
+
+function RowDiagram({ rows, rowSymbols, woody, woodySymbols }: { rows: NormalizedPlacement[]; rowSymbols: Map<string, string>; woody: NormalizedPlacement[]; woodySymbols: Map<string, string> }) {
+  const rowGap = 92 / Math.max(rows.length, 1);
+  return (
+    <svg className="h-72 w-full rounded border border-border bg-white" viewBox="0 0 320 210" role="img" aria-label="Row planting diagram">
+      <text x="16" y="20" className="fill-slate-700 text-[11px] font-semibold">North ↑</text>
+      <rect x="18" y="34" width="284" height="152" rx="3" fill="#f8fafc" stroke="#334155" strokeWidth="1.5" />
+      {rows.map((placement, index) => {
+        const y = 54 + index * rowGap;
+        return (
+          <g key={`${placement.plant_slug}-${index}`}>
+            <line x1="34" x2="286" y1={y} y2={y} stroke="#15803d" strokeWidth="3" />
+            <text x="42" y={y - 6} className="fill-slate-900 text-[10px] font-semibold">Row {index + 1}: {displayPlacementName(placement)} ({rowSymbols.get(displayPlacementName(placement))})</text>
+          </g>
+        );
+      })}
+      {woody.map((placement, index) => {
+        const symbol = woodySymbols.get(displayPlacementName(placement)) ?? "?";
+        return (
+          <g key={`${placement.plant_slug}-${index}`}>
+            <circle cx={52 + index * 38} cy="170" r="13" fill="#e7e5e4" stroke="#78716c" />
+            <text x={52 + index * 38} y="174" textAnchor="middle" className="fill-slate-900 text-[9px] font-bold">{symbol}</text>
+          </g>
+        );
+      })}
+      <text x="160" y="202" textAnchor="middle" className="fill-slate-500 text-[9px]">Rows run west to east</text>
+    </svg>
+  );
+}
+
+function PlantSymbolLegend({ placements, symbols }: { placements: NormalizedPlacement[]; symbols: Map<string, string> }) {
+  if (!placements.length) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+      {placements.map((placement) => {
+        const name = displayPlacementName(placement);
+        return <div key={`${placement.plant_slug}-${placement.cultivar_slug ?? ""}`}><span className="font-semibold">{symbols.get(name)}</span> — {name}</div>;
+      })}
+    </div>
+  );
+}
+
+function TreeBushLegend({ placements, symbols }: { placements: NormalizedPlacement[]; symbols: Map<string, string> }) {
+  return (
+    <div className="rounded-md border border-stone-300 bg-stone-50 p-3">
+      <div className="mb-2 font-semibold">Trees & Bushes</div>
+      <div className="grid gap-1 text-sm sm:grid-cols-2">
+        {placements.map((placement) => {
+          const name = displayPlacementName(placement);
+          return <div key={`${placement.plant_slug}-${placement.cultivar_slug ?? ""}`}><span className="font-semibold">{symbols.get(name)}</span> — {name}</div>;
+        })}
+      </div>
     </div>
   );
 }
@@ -317,6 +415,74 @@ function layoutStyleLabel(style?: string | null) {
   if (style === "raised_beds") return "Raised beds";
   if (style === "rows") return "Rows";
   return "Grid";
+}
+
+function buildSymbolMap(placements: NormalizedPlacement[]) {
+  const symbols = new Map<string, string>();
+  const used = new Set<string>();
+  placements.forEach((placement) => {
+    const name = displayPlacementName(placement);
+    symbols.set(name, getPlantSymbol(name, used));
+  });
+  return symbols;
+}
+
+function symbolForCell(cell: NormalizedCell, placements: NormalizedPlacement[], symbols: Map<string, string>) {
+  const placement = placements.find((item) => item.grid_cells.includes(cell.cell_id));
+  return placement ? symbols.get(displayPlacementName(placement)) ?? "?" : "?";
+}
+
+function buildTreeBushSymbolMap(placements: NormalizedPlacement[]) {
+  const counters = new Map<string, number>();
+  const symbols = new Map<string, string>();
+  placements.forEach((placement) => {
+    const name = displayPlacementName(placement);
+    const prefix = placement.placement_role === "shrub" ? "B" : treePrefix(name);
+    const next = (counters.get(prefix) ?? 0) + 1;
+    counters.set(prefix, next);
+    symbols.set(name, `${prefix}${next}`);
+  });
+  return symbols;
+}
+
+function getPlantSymbol(plantName: string, existingSymbols: Set<string>) {
+  const words = plantName.replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+  const candidates = [
+    firstLetter(plantName),
+    words.slice(0, 2).map((word) => word[0]?.toUpperCase()).join(""),
+    plantName.slice(0, 2).replace(/[^A-Za-z0-9]/g, "").replace(/^\w/, (value) => value.toUpperCase())
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (!existingSymbols.has(candidate)) {
+      existingSymbols.add(candidate);
+      return candidate;
+    }
+  }
+  const base = firstLetter(plantName);
+  let index = 1;
+  while (existingSymbols.has(`${base}${index}`)) index += 1;
+  const symbol = `${base}${index}`;
+  existingSymbols.add(symbol);
+  return symbol;
+}
+
+function firstLetter(value: string) {
+  return (value.match(/[A-Za-z0-9]/)?.[0] ?? "P").toUpperCase();
+}
+
+function treePrefix(value: string) {
+  const words = value.replace(/[^A-Za-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+  const treeWord = words.find((word) => /apple|pear|peach|plum|cherry/i.test(word));
+  return firstLetter(treeWord ?? words[words.length - 1] ?? value);
+}
+
+function numberMetadata(metadata: Record<string, unknown> | undefined, key: string, fallback: number) {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.filter(Boolean)));
 }
 
 function columnLabel(col: number) {

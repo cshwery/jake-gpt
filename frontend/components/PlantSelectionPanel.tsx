@@ -77,7 +77,7 @@ export function PlantSelectionPanel({
             {recommendations.warnings.length ? (
               <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
                 {recommendations.warnings.map((warning) => (
-                  <div key={`${warning.warning_type}-${warning.plant_slugs.join("-")}`}>{warning.message}</div>
+                  <div key={`${warning.warning_type}-${warning.plant_slugs.join("-")}`}>{gardenerWarning(warning.message)}</div>
                 ))}
               </div>
             ) : null}
@@ -111,7 +111,7 @@ export function PlantSelectionPanel({
                         {item.reason_codes.slice(0, 3).map((code) => <li key={code}>{recommendationReasonLabel(code)}</li>)}
                       </ul>
                     </div>
-                    {item.warnings.length ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{item.warnings.join(" ")}</div> : null}
+                    {item.warnings.length ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{item.warnings.map(gardenerWarning).join(" ")}</div> : null}
                   </div>
                 );
               })}
@@ -166,6 +166,19 @@ export function PlantSelectionPanel({
       </div>
     </div>
   );
+}
+
+function gardenerWarning(message: string) {
+  const internalNightshade = "Nightshade crops can share disease and pest pressure; close clustering should be flagged as a risk rather than a beneficial pairing.";
+  if (message.includes(internalNightshade)) {
+    return message.replace(
+      internalNightshade,
+      "Tomatoes, peppers, eggplants, and potatoes are all nightshades. Try not to cluster them too closely because they can share pest and disease pressure."
+    );
+  }
+  return message
+    .replace("flagged as a risk rather than a beneficial pairing", "treated as something to separate in the garden")
+    .replace("beneficial pairing", "helpful pairing");
 }
 
 function SelectedPlantsSummary({

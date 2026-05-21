@@ -271,16 +271,16 @@ class GardenRecommendationService:
                     codes.append("NUTRIENT_SUPPORT")
                 elif edge.relationship_type == "avoid":
                     codes.append("AVOID_RELATIONSHIP")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "disease_risk":
                     codes.append("DISEASE_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "pest_risk":
                     codes.append("PEST_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 elif edge.relationship_type == "allelopathy":
                     codes.append("ALLELOPATHY_RISK")
-                    warnings.append(edge.rationale)
+                    warnings.append(_gardener_warning(edge.rationale))
                 if edge.relationship_type in STRONG_NEGATIVE_RELATIONSHIP_TYPES and edge.score <= -20:
                     score -= 25
         return round(score, 2), codes, warnings
@@ -326,7 +326,7 @@ class GardenRecommendationService:
                     warning_type=conflict.relationship_type,
                     plant_slugs=[conflict.source_plant_slug, conflict.target_plant_slug],
                     severity="high" if conflict.score <= -20 else "medium",
-                    message=f"{conflict.rationale} {conflict.suggested_action}",
+                    message=f"{_gardener_warning(conflict.rationale)} {conflict.suggested_action}",
                 )
             )
         for index, plant_slug in enumerate(selected):
@@ -487,6 +487,16 @@ def _recommendation_type(codes: list[str]) -> str:
     if any(code.endswith("_GOAL_MATCH") for code in codes):
         return "goal_fit"
     return "climate_fit"
+
+
+def _gardener_warning(message: str) -> str:
+    internal_nightshade = "Nightshade crops can share disease and pest pressure; close clustering should be flagged as a risk rather than a beneficial pairing."
+    if message == internal_nightshade:
+        return "Tomatoes, peppers, eggplants, and potatoes are all nightshades. Try not to cluster them too closely because they can share pest and disease pressure."
+    return (
+        message.replace("flagged as a risk rather than a beneficial pairing", "treated as something to separate in the garden")
+        .replace("beneficial pairing", "helpful pairing")
+    )
 
 
 def _explanation(plant: Plant, recommendation_type: str, codes: list[str], warnings: list[str]) -> str:
