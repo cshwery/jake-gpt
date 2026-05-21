@@ -11,9 +11,11 @@ PlacementRole = Literal["crop", "companion", "pollinator", "border", "path", "su
 class LayoutOptions(BaseModel):
     cell_size_ft: float = 2
     include_paths: bool = True
-    layout_style: str = "grid"
+    layout_style: Literal["grid", "rows", "raised_beds", "intensive_grid", "mixed"] = "grid"
     max_candidates: int = 10
     persist: bool = True
+    using_raised_beds: bool | None = None
+    raised_beds: dict[str, Any] | None = None
 
 
 class LayoutGenerateRequest(BaseModel):
@@ -35,6 +37,8 @@ class GridCell(BaseModel):
     cultivar_slug: str | None = None
     label: str | None = None
     placement_role: PlacementRole | None = None
+    group_id: str | None = None
+    group_label: str | None = None
     notes: list[str] = Field(default_factory=list)
 
 
@@ -43,6 +47,7 @@ class GardenGrid(BaseModel):
     cols: int
     cell_size_ft: float = 2
     orientation: str = "north_up"
+    layout_style: str = "grid"
     cells: list[GridCell] = Field(default_factory=list)
     access_paths: list[str] = Field(default_factory=list)
 
@@ -188,6 +193,7 @@ class LayoutResult(BaseModel):
             "cols": self.grid.cols,
             "cell_size_ft": self.grid.cell_size_ft,
             "orientation": self.grid.orientation,
+            "layout_style": self.grid.layout_style,
             "cells": [cell.model_dump(mode="json") for cell in self.grid.cells],
             "access_paths": self.grid.access_paths,
         }

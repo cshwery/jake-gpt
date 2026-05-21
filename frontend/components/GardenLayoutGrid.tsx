@@ -23,6 +23,8 @@ type NormalizedCell = {
   label?: string | null;
   notes: string[];
   placement_role?: string | null;
+  group_id?: string | null;
+  group_label?: string | null;
 };
 
 export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", showLegend = true, className = "" }: Props) {
@@ -48,9 +50,10 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
       </div>
 
       <div className="mb-3 flex flex-wrap gap-2 text-xs text-foreground/70">
+        <InfoChip label={layoutStyleLabel(normalized.grid.layout_style)} />
         <InfoChip label="North ↑" />
-        <InfoChip label={`Each cell = ${normalized.grid.cell_size_ft.toFixed(0)} ft × ${normalized.grid.cell_size_ft.toFixed(0)} ft`} />
-        <InfoChip label={`Top of grid represents north.`} />
+        <InfoChip label={normalized.grid.layout_style === "rows" ? "Rows run west to east." : `Each cell = ${normalized.grid.cell_size_ft.toFixed(0)} ft × ${normalized.grid.cell_size_ft.toFixed(0)} ft`} />
+        <InfoChip label={normalized.grid.layout_style === "raised_beds" ? "Beds are separated by paths." : `Top of grid represents north.`} />
         {normalized.area_sq_ft != null ? <InfoChip label={`${normalized.area_sq_ft.toFixed(0)} sq ft`} /> : null}
         {normalized.area_category ? <InfoChip label={normalized.area_category} /> : normalized.area_sq_ft != null ? <InfoChip label={areaCategoryLabel(normalized.area_sq_ft)} /> : null}
         {normalized.approximate_dimensions_ft ? (
@@ -61,26 +64,13 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
       <div className="grid gap-4 xl:grid-cols-[1fr_280px]">
         <div>
           <div className="mb-2 text-xs font-medium uppercase text-foreground/50">North ↑</div>
-          <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${normalized.grid.cols}, minmax(0, 1fr))` }}>
-            {normalized.grid.cells.map((cell) => {
-              const role = cell.placement_role ?? inferRole(cell, normalized.placements);
-              return (
-                <div
-                  key={cell.cell_id}
-                  className={`flex min-h-16 flex-col justify-between rounded-sm border p-2 text-xs ${
-                    cell.is_path
-                      ? "border-stone-300 bg-stone-100 text-stone-600"
-                      : cell.label
-                        ? roleStyles(role, true)
-                        : "border-border bg-muted/30 text-foreground/70"
-                  }`}
-                >
-                  <span className="font-semibold">{cell.cell_id}</span>
-                  <span>{cell.is_path ? "Path" : cell.label ? titleCase(cell.label) : "Open"}</span>
-                </div>
-              );
-            })}
-          </div>
+          {normalized.grid.layout_style === "rows" ? (
+            <RowLayoutView cells={normalized.grid.cells} placements={normalized.placements} />
+          ) : normalized.grid.layout_style === "raised_beds" ? (
+            <RaisedBedsView cells={normalized.grid.cells} placements={normalized.placements} cols={normalized.grid.cols} />
+          ) : (
+            <GridLayoutView cells={normalized.grid.cells} placements={normalized.placements} cols={normalized.grid.cols} />
+          )}
         </div>
 
         <div className="space-y-3 text-sm">
@@ -129,6 +119,8 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
                 <InfoChip label="Companion" />
                 <InfoChip label="Pollinator/border" />
                 <InfoChip label="Path" />
+                {normalized.grid.layout_style === "raised_beds" ? <InfoChip label="Raised bed" /> : null}
+                {normalized.grid.layout_style === "rows" ? <InfoChip label="Planting row" /> : null}
                 <InfoChip label="Warning" />
               </div>
             </div>
@@ -141,7 +133,7 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
 
 function normalizeLayout(layout: LayoutResult) {
   return {
-    grid: layout.grid,
+    grid: { ...layout.grid, layout_style: layout.grid.layout_style ?? "grid" },
     placements: layout.placements,
     score_breakdown: layout.score_breakdown,
     warnings: layout.warnings ?? [],
@@ -179,6 +171,7 @@ function normalizePlan(plan?: GeneratedPlan | null) {
       cols: plan.layout_grid.cols,
       cell_size_ft: 2,
       orientation: "north_up",
+      layout_style: "grid",
       cells,
       access_paths: plan.layout_grid.access_paths ?? []
     },
@@ -248,6 +241,82 @@ function roleStyles(role: string | null | undefined, hasPlant: boolean) {
 function inferRole(cell: NormalizedCell, placements: LayoutResult["placements"]) {
   const placement = placements.find((entry) => entry.grid_cells.includes(cell.cell_id));
   return placement?.placement_role ?? null;
+}
+
+function GridLayoutView({ cells, placements, cols }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; cols: number }) {
+  return (
+    <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+      {cells.map((cell) => <LayoutCell key={cell.cell_id} cell={cell} role={cell.placement_role ?? inferRole(cell, placements)} />)}
+    </div>
+  );
+}
+
+function RowLayoutView({ cells, placements }: { cells: NormalizedCell[]; placements: LayoutResult["placements"] }) {
+  const rows = Array.from(new Set(cells.map((cell) => cell.row))).sort((a, b) => a - b);
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => {
+        const rowCells = cells.filter((cell) => cell.row === row).sort((a, b) => a.col - b.col);
+        const placement = placements.find((item) => item.row === row || item.grid_cells.some((cellId) => rowCells.some((cell) => cell.cell_id === cellId)));
+        return (
+          <div key={row} className="rounded-md border border-border bg-muted/20 p-2">
+            <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold">{rowCells[0]?.group_label ?? `Row ${row + 1}`}</span>
+              {placement ? <span className="text-foreground/60">{displayPlacementName(placement)} · {placement.quantity} plantings</span> : null}
+            </div>
+            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${rowCells.length}, minmax(0, 1fr))` }}>
+              {rowCells.map((cell) => <LayoutCell key={cell.cell_id} cell={cell} role={cell.placement_role ?? inferRole(cell, placements)} compact />)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function RaisedBedsView({ cells, placements, cols }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; cols: number }) {
+  const groups = Array.from(new Set(cells.map((cell) => cell.group_id ?? "ungrouped"))).filter((group) => group !== "path" && group !== "ungrouped");
+  if (!groups.length) return <GridLayoutView cells={cells} placements={placements} cols={cols} />;
+  return (
+    <div className="space-y-3">
+      {groups.map((group) => {
+        const bedCells = cells.filter((cell) => cell.group_id === group).sort((a, b) => a.row - b.row || a.col - b.col);
+        const bedRows = Array.from(new Set(bedCells.map((cell) => cell.row))).sort((a, b) => a - b);
+        return (
+          <div key={group} className="rounded-md border border-emerald-200 bg-emerald-50/40 p-3">
+            <div className="mb-2 text-sm font-semibold">{bedCells[0]?.group_label ?? titleCase(group)}</div>
+            <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+              {bedRows.flatMap((row) =>
+                bedCells
+                  .filter((cell) => cell.row === row)
+                  .sort((a, b) => a.col - b.col)
+                  .map((cell) => <LayoutCell key={cell.cell_id} cell={cell} role={cell.placement_role ?? inferRole(cell, placements)} compact />)
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function LayoutCell({ cell, role, compact = false }: { cell: NormalizedCell; role: string | null | undefined; compact?: boolean }) {
+  return (
+    <div
+      className={`flex flex-col justify-between rounded-sm border p-2 text-xs ${
+        compact ? "min-h-10" : "min-h-16"
+      } ${cell.is_path ? "border-stone-300 bg-stone-100 text-stone-600" : cell.label ? roleStyles(role, true) : "border-border bg-muted/30 text-foreground/70"}`}
+    >
+      <span className="font-semibold">{cell.cell_id}</span>
+      <span className={compact ? "truncate" : ""}>{cell.is_path ? "Path" : cell.label ? titleCase(cell.label) : "Open"}</span>
+    </div>
+  );
+}
+
+function layoutStyleLabel(style?: string | null) {
+  if (style === "raised_beds") return "Raised beds";
+  if (style === "rows") return "Rows";
+  return "Grid";
 }
 
 function columnLabel(col: number) {

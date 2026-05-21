@@ -18,6 +18,15 @@ class GridBuilder:
         options = options or LayoutOptions()
         area_sq_ft = _area_sq_ft(garden, garden_context)
         cell_size_ft = options.cell_size_ft or DEFAULT_CELL_SIZE_FT
+        layout_style = "raised_beds" if options.using_raised_beds or options.layout_style == "raised_beds" else options.layout_style
+        if layout_style == "rows":
+            grid = self._build_row_grid(plant_count, cell_size_ft)
+            self._last_paths = []
+            return grid
+        if layout_style == "raised_beds":
+            grid = self._build_raised_bed_grid(plant_count, cell_size_ft, options)
+            self._last_paths = []
+            return grid
         if garden is None and garden_context is None:
             rows = max(MIN_GRID_ROWS, (plant_count + columns - 1) // columns + 1)
             cols = columns
@@ -48,7 +57,7 @@ class GridBuilder:
             for row in range(rows)
             for col in range(cols)
         ]
-        grid = GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, cells=cells, access_paths=access_paths)
+        grid = GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, layout_style="grid", cells=cells, access_paths=access_paths)
         self._last_paths = paths
         return grid
 
@@ -75,6 +84,64 @@ class GridBuilder:
         if area_sq_ft > 500:
             return True
         return rows > 3 or cols > 4
+
+    def _build_row_grid(self, plant_count: int, cell_size_ft: float) -> GardenGrid:
+        rows = max(1, plant_count)
+        cols = 8
+        cells = [
+            GridCell(
+                cell_id=f"R{row + 1}-{col + 1}",
+                row=row,
+                col=col,
+                group_id=f"row-{row + 1}",
+                group_label=f"Row {row + 1}",
+            )
+            for row in range(rows)
+            for col in range(cols)
+        ]
+        return GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, layout_style="rows", cells=cells, access_paths=["rows run west to east; row 1 is the northern row"])
+
+    def _build_raised_bed_grid(self, plant_count: int, cell_size_ft: float, options: LayoutOptions) -> GardenGrid:
+        bed_setup = options.raised_beds or {}
+        bed_count = max(1, int(bed_setup.get("number_of_beds") or min(max(plant_count // 3, 1), 4)))
+        bed_width_ft = float(bed_setup.get("bed_width_ft") or 4)
+        bed_length_ft = float(bed_setup.get("bed_length_ft") or 8)
+        bed_rows = max(2, min(4, round(bed_width_ft / max(cell_size_ft, 1))))
+        bed_cols = max(3, min(8, round(bed_length_ft / max(cell_size_ft, 1))))
+        spacer_rows = max(0, bed_count - 1)
+        rows = bed_count * bed_rows + spacer_rows
+        cols = bed_cols
+        cells: list[GridCell] = []
+        for bed_index in range(bed_count):
+            row_offset = bed_index * (bed_rows + 1)
+            for local_row in range(bed_rows):
+                for col in range(cols):
+                    row = row_offset + local_row
+                    cells.append(
+                        GridCell(
+                            cell_id=f"B{bed_index + 1}-{_column_label(col)}{local_row + 1}",
+                            row=row,
+                            col=col,
+                            group_id=f"bed-{bed_index + 1}",
+                            group_label=f"Bed {bed_index + 1}",
+                        )
+                    )
+            if bed_index < bed_count - 1:
+                path_row = row_offset + bed_rows
+                for col in range(cols):
+                    cells.append(
+                        GridCell(
+                            cell_id=f"P{bed_index + 1}-{col + 1}",
+                            row=path_row,
+                            col=col,
+                            available=False,
+                            is_path=True,
+                            group_id="path",
+                            group_label="Path",
+                        )
+                    )
+        access_paths = [f"{bed_count} raised bed{'s' if bed_count != 1 else ''}; paths shown between beds"]
+        return GardenGrid(rows=rows, cols=cols, cell_size_ft=cell_size_ft, layout_style="raised_beds", cells=cells, access_paths=access_paths)
 
 
 def _area_sq_ft(garden: Garden | None, garden_context: Any | None) -> float:

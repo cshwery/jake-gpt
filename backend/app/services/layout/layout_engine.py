@@ -118,7 +118,7 @@ class LayoutEngine:
         grid_area_sq_ft = (best.grid.rows * best.grid.cols) * (best.grid.cell_size_ft ** 2)
         return LayoutResult(
             garden_id=garden_id or getattr(garden, "id", None),
-            summary=f"LayoutEngine v1 selected the {best.name.replace('_', ' ')} candidate with score {best.score_breakdown.total_score:.1f}.",
+            summary=_layout_summary(best, best.score_breakdown.total_score),
             area_sq_ft=area_sq_ft or None,
             area_category=area_category(area_sq_ft) if area_sq_ft else None,
             approximate_dimensions_ft={"width": round(best.grid.cols * best.grid.cell_size_ft, 1), "height": round(best.grid.rows * best.grid.cell_size_ft, 1), "grid_area_sq_ft": round(grid_area_sq_ft, 1)},
@@ -222,3 +222,11 @@ def _area_sq_ft(garden: Garden | None, garden_context: GardenContext | Any | Non
         if isinstance(garden_context, dict):
             return float(garden_context.get("geometry", {}).get("area_sq_ft", 0) or garden_context.get("area_sq_ft", 0) or 0)
     return float(getattr(garden, "area_sq_ft", 0) or 0)
+
+
+def _layout_summary(candidate: LayoutCandidate, score: float) -> str:
+    if candidate.grid.layout_style == "raised_beds":
+        return f"Raised-bed layout mixes selected plants across beds for density and companion relationships. Selected {candidate.name.replace('_', ' ')} with layout quality {score:.1f}."
+    if candidate.grid.layout_style == "rows":
+        return f"Row layout places each crop in a horizontal planting row rather than a square grid. Selected {candidate.name.replace('_', ' ')} with layout quality {score:.1f}."
+    return f"Grid layout selected the {candidate.name.replace('_', ' ')} candidate with layout quality {score:.1f}."

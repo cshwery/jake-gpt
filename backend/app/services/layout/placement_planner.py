@@ -28,6 +28,10 @@ class PlacementPlanner:
         cultivars: list[PlantCultivar] | None = None,
         companion_graph: CompanionGraphService | None = None,
     ) -> tuple[list[LayoutPlacementDTO], list[str]]:
+        if grid.layout_style == "rows":
+            return self._plan_row_placements(garden, plants, grid, cultivars=cultivars, companion_graph=companion_graph)
+        if grid.layout_style == "raised_beds":
+            return self._plan_raised_bed_placements(garden, plants, grid, cultivars=cultivars, companion_graph=companion_graph)
         cultivar_by_plant = {cultivar.plant_id: cultivar for cultivar in cultivars or []}
         available = [cell for cell in grid.cells if cell.available and not cell.is_path]
         placements: list[LayoutPlacementDTO] = []
@@ -73,6 +77,118 @@ class PlacementPlanner:
                 warnings=quantity_warnings,
             )
             placements.append(placement)
+        return placements, warnings
+
+    def _plan_row_placements(
+        self,
+        garden: Garden,
+        plants: list[Plant],
+        grid: GardenGrid,
+        cultivars: list[PlantCultivar] | None = None,
+        companion_graph: CompanionGraphService | None = None,
+    ) -> tuple[list[LayoutPlacementDTO], list[str]]:
+        cultivar_by_plant = {cultivar.plant_id: cultivar for cultivar in cultivars or []}
+        placements: list[LayoutPlacementDTO] = []
+        warnings: list[str] = []
+        for row, plant in enumerate(plants[: grid.rows]):
+            row_cells = [cell for cell in grid.cells if cell.row == row and cell.available and not cell.is_path]
+            if not row_cells:
+                warnings.append(f"No row remained for {plant.common_name.title()}; quantity was reduced to zero.")
+                continue
+            cultivar = cultivar_by_plant.get(plant.id)
+            spacing, row_spacing = spacing_for(plant, cultivar)
+            quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+            role = _placement_role(plant, companion_graph)
+            for cell in row_cells:
+                cell.plant_slug = _plant_slug(plant)
+                cell.cultivar_slug = cultivar.slug if cultivar else None
+                cell.label = plant.common_name.title()
+                cell.placement_role = role
+                cell.notes.append(f"Part of {plant.common_name.title()} row")
+            warnings.extend(quantity_warnings)
+            placements.append(
+                LayoutPlacementDTO(
+                    plant_id=plant.id,
+                    plant_slug=_plant_slug(plant),
+                    plant_common_name=plant.common_name,
+                    cultivar_id=cultivar.id if cultivar else None,
+                    cultivar_slug=cultivar.slug if cultivar else None,
+                    cultivar_name=cultivar.cultivar_name if cultivar else None,
+                    quantity=quantity,
+                    grid_cells=[cell.cell_id for cell in row_cells],
+                    row=row,
+                    col=0,
+                    width=len(row_cells),
+                    height=1,
+                    x_pct=50,
+                    y_pct=(row + 0.5) / grid.rows * 100,
+                    spacing_inches=spacing,
+                    row_spacing_inches=row_spacing,
+                    placement_role=role,
+                    location_notes=f"Dedicated row; {spacing} in in-row spacing and {row_spacing} in between rows.",
+                    warnings=quantity_warnings,
+                )
+            )
+        if len(plants) > grid.rows:
+            warnings.append("Some selected plants did not fit into the available row count.")
+        return placements, warnings
+
+    def _plan_raised_bed_placements(
+        self,
+        garden: Garden,
+        plants: list[Plant],
+        grid: GardenGrid,
+        cultivars: list[PlantCultivar] | None = None,
+        companion_graph: CompanionGraphService | None = None,
+    ) -> tuple[list[LayoutPlacementDTO], list[str]]:
+        cultivar_by_plant = {cultivar.plant_id: cultivar for cultivar in cultivars or []}
+        available = [cell for cell in grid.cells if cell.available and not cell.is_path]
+        bed_ids = sorted({cell.group_id for cell in available if cell.group_id and cell.group_id.startswith("bed-")})
+        by_bed = {bed_id: [cell for cell in available if cell.group_id == bed_id] for bed_id in bed_ids}
+        bed_slots = [cell for bed_id in bed_ids for cell in by_bed[bed_id]]
+        placements: list[LayoutPlacementDTO] = []
+        warnings: list[str] = []
+        occupied: set[str] = set()
+        for index, plant in enumerate(plants):
+            cultivar = cultivar_by_plant.get(plant.id)
+            bed_id = bed_ids[index % len(bed_ids)] if bed_ids else None
+            candidates = by_bed.get(bed_id, bed_slots) if bed_id else bed_slots
+            cell = self._select_cell(plant, candidates, placements, companion_graph, occupied) or next((item for item in bed_slots if item.cell_id not in occupied), None)
+            if cell is None:
+                warnings.append(f"No raised bed cell remained for {plant.common_name.title()}; quantity was reduced to zero.")
+                continue
+            occupied.add(cell.cell_id)
+            spacing, row_spacing = spacing_for(plant, cultivar)
+            quantity, quantity_warnings = self.estimate_quantity(garden, plant, len(plants), spacing, row_spacing)
+            role = _placement_role(plant, companion_graph)
+            cell.plant_slug = _plant_slug(plant)
+            cell.cultivar_slug = cultivar.slug if cultivar else None
+            cell.label = plant.common_name.title()
+            cell.placement_role = role
+            bed_label = cell.group_label or "Raised bed"
+            cell.notes.append(f"{plant.common_name.title()} in {bed_label}")
+            warnings.extend(quantity_warnings)
+            placements.append(
+                LayoutPlacementDTO(
+                    plant_id=plant.id,
+                    plant_slug=_plant_slug(plant),
+                    plant_common_name=plant.common_name,
+                    cultivar_id=cultivar.id if cultivar else None,
+                    cultivar_slug=cultivar.slug if cultivar else None,
+                    cultivar_name=cultivar.cultivar_name if cultivar else None,
+                    quantity=quantity,
+                    grid_cells=[cell.cell_id],
+                    row=cell.row,
+                    col=cell.col,
+                    x_pct=(cell.col + 0.5) / grid.cols * 100,
+                    y_pct=(cell.row + 0.5) / grid.rows * 100,
+                    spacing_inches=spacing,
+                    row_spacing_inches=row_spacing,
+                    placement_role=role,
+                    location_notes=f"{bed_label}; mixed planting for density and companion relationships. {spacing} in spacing.",
+                    warnings=quantity_warnings,
+                )
+            )
         return placements, warnings
 
     def build_items(self, garden: Garden, plants: list[Plant], rows: int, cols: int) -> list[PlanItemRead]:

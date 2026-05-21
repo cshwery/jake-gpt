@@ -279,7 +279,15 @@ export default function Home() {
           selected_cultivar_slugs: selectedCultivarSlugs,
           accepted_recommendation_slugs: selectedPlantSlugs,
           accepted_cultivar_slugs: selectedCultivarSlugs,
-          options: { cell_size_ft: 2, include_paths: true, layout_style: "grid", max_candidates: 10, persist: true }
+          options: {
+            cell_size_ft: goals.using_raised_beds ? 1 : goals.planting_style === "rows" ? 1 : 2,
+            include_paths: goals.using_raised_beds ? false : goals.planting_style !== "rows",
+            layout_style: goals.using_raised_beds ? "raised_beds" : goals.planting_style === "rows" ? "rows" : "grid",
+            max_candidates: 10,
+            persist: true,
+            using_raised_beds: goals.using_raised_beds,
+            raised_beds: goals.raised_beds
+          }
         })
       });
       setLayout(generated);
