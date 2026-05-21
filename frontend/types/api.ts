@@ -186,8 +186,11 @@ export type LayoutResult = {
       cultivar_slug?: string | null;
       label?: string | null;
       placement_role?: string | null;
+      group_id?: string | null;
+      group_label?: string | null;
       notes: string[];
     }>;
+    layout_style?: string;
     access_paths: string[];
   };
   placements: Array<{
@@ -197,6 +200,12 @@ export type LayoutResult = {
     cultivar_name?: string | null;
     quantity: number;
     grid_cells: string[];
+    row?: number | null;
+    col?: number | null;
+    width?: number;
+    height?: number;
+    x_pct?: number | null;
+    y_pct?: number | null;
     spacing_inches?: number | null;
     row_spacing_inches?: number | null;
     placement_role?: string | null;

@@ -137,6 +137,48 @@ def test_layout_engine_v1_scores_and_explains_candidates() -> None:
     assert any("companion graph" in explanation for explanation in result.explanations)
 
 
+def test_row_layout_places_each_plant_in_a_planting_row() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "basil"), _plant(3, "carrot")]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=240),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=240, sunlight_category="full_sun"),
+        options=LayoutOptions(cell_size_ft=1, include_paths=False, layout_style="rows"),
+    )
+
+    assert result.grid.layout_style == "rows"
+    assert result.grid.rows == len(plants)
+    assert result.paths == []
+    assert result.placements[0].width > 1
+    assert all(cell.group_label and cell.group_label.startswith("Row") for cell in result.grid.cells)
+    assert "Row layout" in result.summary
+
+
+def test_raised_bed_layout_groups_cells_by_bed_and_mixes_plants() -> None:
+    plants = [_plant(1, "tomato"), _plant(2, "basil"), _plant(3, "carrot"), _plant(4, "marigold", flower=True)]
+
+    result = LayoutEngine().generate_layout(
+        _garden(area=96),
+        plants,
+        garden_context=SimpleNamespace(area_sq_ft=96, sunlight_category="full_sun"),
+        options=LayoutOptions(
+            cell_size_ft=1,
+            include_paths=False,
+            layout_style="raised_beds",
+            using_raised_beds=True,
+            raised_beds={"number_of_beds": 2, "bed_length_ft": 4, "bed_width_ft": 2},
+        ),
+    )
+
+    bed_cells = [cell for cell in result.grid.cells if cell.group_id and cell.group_id.startswith("bed-")]
+    assert result.grid.layout_style == "raised_beds"
+    assert {cell.group_label for cell in bed_cells} == {"Bed 1", "Bed 2"}
+    assert any(cell.is_path for cell in result.grid.cells)
+    assert all("Bed" in (placement.location_notes or "") for placement in result.placements)
+    assert "Raised-bed layout" in result.summary
+
+
 def test_layout_engine_persists_layout_and_placements() -> None:
     db = FakeLayoutSession()
     result = LayoutEngine().generate_layout(_garden(area=120), [_plant(1, "tomato")], garden_context=SimpleNamespace(area_sq_ft=120), options=LayoutOptions(cell_size_ft=4))
