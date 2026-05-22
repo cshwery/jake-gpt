@@ -60,6 +60,7 @@ function Harness({
   onGenerateLayout?: () => Promise<void>;
 }) {
   const [selectedPlants, setSelectedPlants] = useState<Array<PlantSearchResult & { selection_key: string }>>([]);
+  const [showIncompatiblePlants, setShowIncompatiblePlants] = useState(false);
   const goals: GardenGoals = {
     goal: "Food",
     goals: ["food"],
@@ -96,20 +97,22 @@ function Harness({
       goals={goals}
       onGenerateRecommendations={vi.fn()}
       onGenerateLayout={onGenerateLayout}
+      showIncompatiblePlants={showIncompatiblePlants}
+      setShowIncompatiblePlants={setShowIncompatiblePlants}
     />
   );
 }
 
-function recommendationResult(): GardenRecommendationResult {
+function recommendationResult(slug = "tomato", commonName = "Tomato", cultivarSlug = "tomato_sungold", cultivarName = "Sungold"): GardenRecommendationResult {
   return {
     garden_id: 1,
     summary: "Recommended plants.",
     selected: ["tomato"],
     recommendations: [
       {
-        plant_slug: "tomato",
-        plant_common_name: "Tomato",
-        cultivar_recommendations: [{ cultivar_slug: "tomato_sungold", cultivar_name: "Sungold", score: 30, reason_codes: [] }],
+        plant_slug: slug,
+        plant_common_name: commonName,
+        cultivar_recommendations: cultivarSlug ? [{ cultivar_slug: cultivarSlug, cultivar_name: cultivarName, score: 30, reason_codes: [] }] : [],
         recommendation_type: "goal_fit",
         score: 100,
         score_breakdown: {},
@@ -197,5 +200,44 @@ describe("PlantSelectionPanel", () => {
 
     expect(screen.getAllByText(/Tomatoes, peppers, eggplants, and potatoes are all nightshades/i).length).toBeGreaterThan(0);
     expect(screen.queryByText(/flagged as a risk/i)).toBeNull();
+  });
+
+  it("shows incompatible-zone plants only when present and warns clearly", () => {
+    render(<Harness plantResults={[{ ...species(9, "fig", "fig"), tree: true, perennial: true, hardiness_compatible: false, hardiness_warning: "Fig is not recommended for your hardiness zone." }]} />);
+
+    expect(screen.getByLabelText("Show plants not recommended for my zone")).toBeTruthy();
+    expect(screen.getByText("Fig is not recommended for your hardiness zone.")).toBeTruthy();
+  });
+
+  it("drops stale unaccepted recommendations when a new run replaces results", () => {
+    const { rerender } = render(<Harness plantResults={[]} recommendations={recommendationResult("basil", "Basil", "", "")} />);
+
+    expect(screen.getByText("Basil")).toBeTruthy();
+
+    rerender(<Harness plantResults={[]} recommendations={recommendationResult("lettuce", "Lettuce", "", "")} />);
+
+    expect(screen.queryByText("Basil")).toBeNull();
+    expect(screen.getByText("Lettuce")).toBeTruthy();
+    expect(screen.getAllByText("Selected plants: 0").length).toBeGreaterThan(0);
+  });
+
+  it("keeps accepted recommendations selected across regeneration", () => {
+    function StatefulRecommendations() {
+      const [recommendations, setRecommendations] = useState(recommendationResult("basil", "Basil", "", ""));
+      return (
+        <div>
+          <button type="button" onClick={() => setRecommendations(recommendationResult("lettuce", "Lettuce", "", ""))}>Regenerate</button>
+          <Harness plantResults={[]} recommendations={recommendations} />
+        </div>
+      );
+    }
+    render(<StatefulRecommendations />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Basil" }));
+    fireEvent.click(screen.getByRole("button", { name: "Regenerate" }));
+
+    expect(screen.getAllByText("Basil").length).toBeGreaterThan(0);
+    expect(screen.getByText("Lettuce")).toBeTruthy();
+    expect(screen.getAllByText("Selected plants: 1").length).toBeGreaterThan(0);
   });
 });

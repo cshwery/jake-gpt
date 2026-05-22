@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from app.engines.companion_graph.service import CompanionGraphService as NewCompanionGraphService
 from app.engines.garden_context.service import GardenContextService as NewGardenContextService
 from app.engines.layout.service import LayoutEngine as NewLayoutEngine
+from app.engines.layout_design import LayoutDesignEngine
 from app.engines.planting_design import PlantingDesignService
 from app.engines.planting_design.schemas import PlantingDesignPlan
 from app.engines.recommendations.service import GardenRecommendationService as NewGardenRecommendationService
@@ -125,7 +126,62 @@ def test_layout_engine_accepts_design_plan_and_returns_it() -> None:
 
     assert isinstance(result.design_plan, PlantingDesignPlan)
     assert result.design_plan.summary == design_plan.summary
+    assert result.layout_blueprint is not None
+    assert result.layout_blueprint.row_blueprint is not None
     assert any("Planting design uses rows organization" in item for item in result.explanations)
+
+
+def test_layout_design_blueprint_uses_companion_clusters_and_tree_section() -> None:
+    plants = [
+        _plant(1, "tomato", height=72),
+        _plant(2, "basil", plant_type="herb"),
+        _plant(3, "marigold", flower=True, pollinator=9),
+        _plant(4, "apple", tree=True, perennial=True),
+    ]
+    graph = CompanionGraphService(plants=plants, relationships=[_relationship(1, 1, 2, "beneficial"), _relationship(2, 1, 3, "pollinator_support")])
+    plan = PlantingDesignService().create_design_plan(_context(), plants, [], graph, organization_style="rows")
+
+    blueprint = LayoutDesignEngine().create_blueprint(plan, plants)
+
+    assert blueprint.layout_style == "rows"
+    assert blueprint.row_blueprint is not None
+    tomato_row = next(row for row in blueprint.row_blueprint.rows if "tomato" in row.primary_plants)
+    assert "basil" in tomato_row.companion_plants
+    assert "marigold" in tomato_row.border_plants
+    assert blueprint.tree_shrub_section is not None
+    assert blueprint.tree_shrub_section.items[0].plant_slug == "apple"
+
+
+def test_layout_design_raised_bed_blueprint_places_border_flowers_and_unplaces_trees() -> None:
+    plants = [
+        _plant(1, "tomato"),
+        _plant(2, "basil", plant_type="herb"),
+        _plant(3, "marigold", flower=True, pollinator=9),
+        _plant(4, "apple", tree=True, perennial=True),
+    ]
+    graph = CompanionGraphService(plants=plants, relationships=[_relationship(1, 1, 2, "beneficial"), _relationship(2, 1, 3, "pollinator_support")])
+    plan = PlantingDesignService().create_design_plan(_context(), plants, [], graph, organization_style="raised_beds")
+
+    blueprint = LayoutDesignEngine().create_blueprint(plan, plants, layout_options=SimpleNamespace(raised_beds={"number_of_beds": 1, "bed_length_ft": 8, "bed_width_ft": 4}))
+
+    assert blueprint.raised_bed_blueprint is not None
+    bed = blueprint.raised_bed_blueprint.beds[0]
+    assert any(planting.plant_slug == "basil" and "tomato" in planting.near_plant_slugs for planting in bed.plantings)
+    assert any(planting.plant_slug == "marigold" and planting.approximate_zone == "border" for planting in bed.border_plantings)
+    assert "apple" in blueprint.raised_bed_blueprint.unplaced_plants
+
+
+def test_layout_design_chaos_blueprint_is_advisory_only() -> None:
+    plants = [_plant(1, "lettuce"), _plant(2, "marigold", flower=True, pollinator=9), _plant(3, "mint", plant_type="herb")]
+    plan = PlantingDesignService().create_design_plan(_context(), plants, [], None, organization_style="chaos")
+
+    blueprint = LayoutDesignEngine().create_blueprint(plan, plants)
+
+    assert blueprint.layout_style == "chaos"
+    assert blueprint.chaos_blueprint is not None
+    assert blueprint.row_blueprint is None
+    assert blueprint.raised_bed_blueprint is None
+    assert blueprint.chaos_blueprint.scatter_guidance
 
 
 def _garden(area: float = 240):

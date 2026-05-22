@@ -2,6 +2,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.engines.layout_design import LayoutDesignEngine
 from app.models import Garden, GardenContext, GardenLayout, LayoutPlacement, Plant, PlantCultivar
 from app.engines.planting_design import PlantingDesignService
 from app.engines.planting_design.schemas import PlantingDesignPlan
@@ -22,11 +23,13 @@ class LayoutEngine:
         placement_planner: PlacementPlanner | None = None,
         layout_scorer: LayoutScorer | None = None,
         explanation_builder: LayoutExplanationBuilder | None = None,
+        layout_design_engine: LayoutDesignEngine | None = None,
     ) -> None:
         self.grid_builder = grid_builder or GridBuilder()
         self.placement_planner = placement_planner or PlacementPlanner()
         self.layout_scorer = layout_scorer or LayoutScorer()
         self.explanation_builder = explanation_builder or LayoutExplanationBuilder()
+        self.layout_design_engine = layout_design_engine or LayoutDesignEngine()
 
     def generate_layout(
         self,
@@ -49,6 +52,13 @@ class LayoutEngine:
             recommendation_result=recommendation_result,
             organization_style="raised_beds" if effective_options.using_raised_beds else effective_options.layout_style,
         )
+        layout_blueprint = self.layout_design_engine.create_blueprint(
+            design_plan=design_plan,
+            plants=plants,
+            cultivars=cultivars or [],
+            garden_context=garden_context,
+            layout_options=effective_options,
+        )
         candidates = self.generate_candidate_layouts(
             garden=garden,
             garden_context=garden_context,
@@ -59,7 +69,7 @@ class LayoutEngine:
             options=options,
             design_plan=design_plan,
         )
-        return self.select_best_layout(candidates, garden=garden, garden_context=garden_context, design_plan=design_plan)
+        return self.select_best_layout(candidates, garden=garden, garden_context=garden_context, design_plan=design_plan, layout_blueprint=layout_blueprint)
 
     def generate_candidate_layouts(
         self,
@@ -133,6 +143,7 @@ class LayoutEngine:
         garden_id: int | None = None,
         garden_context: GardenContext | Any | None = None,
         design_plan: PlantingDesignPlan | None = None,
+        layout_blueprint: Any | None = None,
     ) -> LayoutResult:
         if not candidates:
             raise ValueError("At least one layout candidate is required.")
@@ -152,9 +163,10 @@ class LayoutEngine:
             paths=best.paths,
             score_breakdown=best.score_breakdown,
             design_plan=design_plan,
+            layout_blueprint=layout_blueprint,
             warnings=best.warnings,
-            explanations=best.explanations,
-            assumptions=best.assumptions,
+            explanations=_unique([*best.explanations, *_blueprint_explanations(layout_blueprint)]),
+            assumptions=_unique([*best.assumptions, *(layout_blueprint.assumptions if layout_blueprint else [])]),
         )
 
     def persist_layout(
@@ -322,6 +334,19 @@ def _design_explanations(design_plan: PlantingDesignPlan | None) -> list[str]:
     messages.extend(design_plan.placement_guidance.border_guidance[:2])
     messages.extend(design_plan.placement_guidance.north_south_guidance[:2])
     return messages
+
+
+def _blueprint_explanations(layout_blueprint: Any | None) -> list[str]:
+    if layout_blueprint is None:
+        return []
+    messages = [layout_blueprint.summary]
+    if layout_blueprint.row_blueprint is not None:
+        messages.extend(row.notes[0] for row in layout_blueprint.row_blueprint.rows if row.notes)
+    if layout_blueprint.raised_bed_blueprint is not None:
+        messages.extend(note for bed in layout_blueprint.raised_bed_blueprint.beds for note in bed.notes[:2])
+    if layout_blueprint.chaos_blueprint is not None:
+        messages.extend(layout_blueprint.chaos_blueprint.scatter_guidance[:3])
+    return messages[:8]
 
 
 def _unique(values: list[str]) -> list[str]:

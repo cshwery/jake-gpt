@@ -34,11 +34,14 @@ Backend engines are logically separated under `backend/app/engines/`, with compa
 GardenContextDTO
 -> GardenRecommendationResult
 -> PlantingDesignPlan
+-> LayoutBlueprint
 -> LayoutResult
 -> future ActionPlan
 ```
 
-The Planting Design layer sits between recommendations and layout. It assigns plant roles, builds companion clusters, creates pollinator-border guidance, and produces gardener-friendly separation rules before the layout renderer decides how to show rows, raised beds, grid/mixed layouts, or chaos guidance.
+The Planting Design layer sits between recommendations and layout. It assigns plant roles, builds companion clusters, creates pollinator-border guidance, and produces gardener-friendly separation rules.
+
+`LayoutBlueprint` is the concrete design instruction layer produced from `PlantingDesignPlan`: rows, raised-bed plantings, chaos guidance, tree/shrub sections, symbols, and placement rules. `LayoutResult` is the persisted/renderable result returned to the frontend.
 
 Planting design concepts:
 
@@ -47,8 +50,9 @@ Planting design concepts:
 - Separation rules: user-facing keep-apart guidance for disease risk, pest risk, allelopathy, competition, aggressive spreaders such as mint, and crops like fennel that are best isolated.
 - Chaos mode: advisory guidance rather than a detailed placement map. It emphasizes resilient, lower-maintenance, direct-sow-friendly plants, pollinator support, and separation warnings.
 - Raised-bed tree behavior: trees are not recommended for raised beds unless cultivar data confirms a dwarf or compact variety.
+- Hardiness filtering: incompatible perennial, tree, shrub, and berry candidates are hidden from normal plant search and excluded from recommendations when garden context has a hardiness zone. Annual vegetables and flowers are not excluded solely by perennial hardiness-zone mismatch.
 
-The future Action Plan engine should consume `LayoutResult` and `PlantingDesignPlan`, but watering calendars, planting calendars, shopping lists, affiliate links, and nursery commerce are intentionally out of scope for the current V0 work.
+The future Action Plan engine should consume `LayoutResult`, `LayoutBlueprint`, and `PlantingDesignPlan`, but watering calendars, planting calendars, shopping lists, affiliate links, and nursery commerce are intentionally out of scope for the current V0 work.
 
 ## Local Setup
 
