@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Garden, GardenLayout, GardenRecommendationRun, Plant, PlantCultivar, User
+from app.engines.planting_design import PlantingDesignService
 from app.services.companions import CompanionGraphService
 from app.services.garden_context import GardenContextService
 from app.services.garden_recommendations import GardenRecommendationResult
@@ -46,15 +47,27 @@ def generate_layout(
     if not plants:
         raise HTTPException(status_code=400, detail="Select at least one plant before generating a layout.")
 
+    companion_graph = CompanionGraphService.from_db(db)
+    organization_style = "raised_beds" if payload.options.using_raised_beds else payload.options.layout_style
+    design_plan = PlantingDesignService().create_design_plan(
+        garden_context=context,
+        plants=plants,
+        cultivars=cultivars,
+        companion_graph=companion_graph,
+        garden_goals=None,
+        recommendation_result=recommendation_result,
+        organization_style=organization_style,
+    )
     engine = LayoutEngine()
     result = engine.generate_layout(
         garden=garden,
         garden_context=context,
         plants=plants,
         cultivars=cultivars,
-        companion_graph=CompanionGraphService.from_db(db),
+        companion_graph=companion_graph,
         recommendation_result=recommendation_result,
         options=payload.options,
+        design_plan=design_plan,
     )
     result.recommendation_run_id = payload.recommendation_run_id
     if payload.options.persist:

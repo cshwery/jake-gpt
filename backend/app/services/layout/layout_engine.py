@@ -2,7 +2,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.engines.layout_design import LayoutDesignEngine
 from app.models import Garden, GardenContext, GardenLayout, LayoutPlacement, Plant, PlantCultivar
+from app.engines.planting_design import PlantingDesignService
+from app.engines.planting_design.schemas import PlantingDesignPlan
 from app.services.companions import CompanionGraphService
 from app.services.garden_recommendations import GardenRecommendationResult
 from app.services.garden_area import area_category
@@ -20,11 +23,13 @@ class LayoutEngine:
         placement_planner: PlacementPlanner | None = None,
         layout_scorer: LayoutScorer | None = None,
         explanation_builder: LayoutExplanationBuilder | None = None,
+        layout_design_engine: LayoutDesignEngine | None = None,
     ) -> None:
         self.grid_builder = grid_builder or GridBuilder()
         self.placement_planner = placement_planner or PlacementPlanner()
         self.layout_scorer = layout_scorer or LayoutScorer()
         self.explanation_builder = explanation_builder or LayoutExplanationBuilder()
+        self.layout_design_engine = layout_design_engine or LayoutDesignEngine()
 
     def generate_layout(
         self,
@@ -35,7 +40,25 @@ class LayoutEngine:
         companion_graph: CompanionGraphService | None = None,
         recommendation_result: GardenRecommendationResult | None = None,
         options: LayoutOptions | None = None,
+        design_plan: PlantingDesignPlan | None = None,
     ) -> LayoutResult:
+        effective_options = options or LayoutOptions()
+        design_plan = design_plan or PlantingDesignService().create_design_plan(
+            garden_context=garden_context,
+            plants=plants,
+            cultivars=cultivars or [],
+            companion_graph=companion_graph,
+            garden_goals=None,
+            recommendation_result=recommendation_result,
+            organization_style="raised_beds" if effective_options.using_raised_beds else effective_options.layout_style,
+        )
+        layout_blueprint = self.layout_design_engine.create_blueprint(
+            design_plan=design_plan,
+            plants=plants,
+            cultivars=cultivars or [],
+            garden_context=garden_context,
+            layout_options=effective_options,
+        )
         candidates = self.generate_candidate_layouts(
             garden=garden,
             garden_context=garden_context,
@@ -44,8 +67,9 @@ class LayoutEngine:
             companion_graph=companion_graph,
             recommendation_result=recommendation_result,
             options=options,
+            design_plan=design_plan,
         )
-        return self.select_best_layout(candidates, garden=garden, garden_context=garden_context)
+        return self.select_best_layout(candidates, garden=garden, garden_context=garden_context, design_plan=design_plan, layout_blueprint=layout_blueprint)
 
     def generate_candidate_layouts(
         self,
@@ -56,6 +80,7 @@ class LayoutEngine:
         companion_graph: CompanionGraphService | None = None,
         recommendation_result: GardenRecommendationResult | None = None,
         options: LayoutOptions | None = None,
+        design_plan: PlantingDesignPlan | None = None,
     ) -> list[LayoutCandidate]:
         legacy_grid = garden_context is None and options is None
         options = options or LayoutOptions()
@@ -63,6 +88,7 @@ class LayoutEngine:
         candidates: list[LayoutCandidate] = []
         for strategy in strategies:
             ordered, ordering_warnings = self.placement_planner.order_plants(plants, companion_graph, strategy=strategy)
+            ordered = _apply_design_order(ordered, design_plan)
             grid = self.grid_builder.build_grid(
                 len(ordered),
                 garden=None if legacy_grid else garden,
@@ -71,15 +97,15 @@ class LayoutEngine:
             )
             placements, placement_warnings = self.placement_planner.plan_placements(garden, ordered, grid, cultivars=cultivars, companion_graph=companion_graph)
             paths = self.grid_builder.paths_for_grid(grid)
-            warnings = [*ordering_warnings, *placement_warnings, *self._sunlight_warnings(ordered, garden_context)]
+            warnings = _unique([*ordering_warnings, *placement_warnings, *(design_plan.warnings if design_plan else []), *self._sunlight_warnings(ordered, garden_context)])
             score = self.score_layout(
                 LayoutCandidate(name=strategy, grid=grid, placements=placements, paths=paths, warnings=warnings),
                 plants=ordered,
                 companion_graph=companion_graph,
                 garden_context=garden_context,
             )
-            explanations = self.explanation_builder.explanations(grid, placements, companion_graph)
-            assumptions = self.explanation_builder.assumptions()
+            explanations = _unique([*self.explanation_builder.explanations(grid, placements, companion_graph), *_design_explanations(design_plan)])
+            assumptions = _unique([*self.explanation_builder.assumptions(), *(design_plan.assumptions if design_plan else [])])
             candidates.append(
                 LayoutCandidate(
                     name=strategy,
@@ -110,7 +136,15 @@ class LayoutEngine:
             garden_context=garden_context,
         )
 
-    def select_best_layout(self, candidates: list[LayoutCandidate], garden: Garden | None = None, garden_id: int | None = None, garden_context: GardenContext | Any | None = None) -> LayoutResult:
+    def select_best_layout(
+        self,
+        candidates: list[LayoutCandidate],
+        garden: Garden | None = None,
+        garden_id: int | None = None,
+        garden_context: GardenContext | Any | None = None,
+        design_plan: PlantingDesignPlan | None = None,
+        layout_blueprint: Any | None = None,
+    ) -> LayoutResult:
         if not candidates:
             raise ValueError("At least one layout candidate is required.")
         best = sorted(candidates, key=lambda candidate: (-candidate.score_breakdown.total_score, candidate.name))[0]
@@ -128,9 +162,11 @@ class LayoutEngine:
             placements=best.placements,
             paths=best.paths,
             score_breakdown=best.score_breakdown,
+            design_plan=design_plan,
+            layout_blueprint=layout_blueprint,
             warnings=best.warnings,
-            explanations=best.explanations,
-            assumptions=best.assumptions,
+            explanations=_unique([*best.explanations, *_blueprint_explanations(layout_blueprint)]),
+            assumptions=_unique([*best.assumptions, *(layout_blueprint.assumptions if layout_blueprint else [])]),
         )
 
     def persist_layout(
@@ -257,6 +293,70 @@ def _chaos_metadata(placements, warnings: list[str]) -> dict[str, Any]:
             "Separate plants with pest, disease, or size warnings instead of clustering them together.",
         ],
     }
+
+
+def _apply_design_order(plants: list[Plant], design_plan: PlantingDesignPlan | None) -> list[Plant]:
+    if design_plan is None:
+        return plants
+    role_priority = {
+        "tree": 0,
+        "shrub": 0,
+        "tall_crop": 1,
+        "trellised_crop": 2,
+        "primary_crop": 3,
+        "companion_herb": 4,
+        "leafy_green": 5,
+        "root_crop": 6,
+        "sprawling_crop": 7,
+        "pollinator_flower": 8,
+        "border_plant": 8,
+    }
+    roles_by_slug: dict[str, set[str]] = {}
+    for role in design_plan.plant_roles:
+        roles_by_slug.setdefault(role.plant_slug, set()).add(role.role)
+    return sorted(
+        plants,
+        key=lambda plant: (
+            min([role_priority.get(role, 9) for role in roles_by_slug.get(getattr(plant, "slug", ""), set())] or [9]),
+            getattr(plant, "common_name", ""),
+        ),
+    )
+
+
+def _design_explanations(design_plan: PlantingDesignPlan | None) -> list[str]:
+    if design_plan is None:
+        return []
+    messages = [design_plan.summary]
+    messages.extend(cluster.placement_guidance for cluster in design_plan.companion_clusters[:4])
+    messages.extend(design_plan.placement_guidance.rows_guidance[:3])
+    messages.extend(design_plan.placement_guidance.raised_beds_guidance[:3])
+    messages.extend(design_plan.placement_guidance.chaos_guidance[:3])
+    messages.extend(design_plan.placement_guidance.border_guidance[:2])
+    messages.extend(design_plan.placement_guidance.north_south_guidance[:2])
+    return messages
+
+
+def _blueprint_explanations(layout_blueprint: Any | None) -> list[str]:
+    if layout_blueprint is None:
+        return []
+    messages = [layout_blueprint.summary]
+    if layout_blueprint.row_blueprint is not None:
+        messages.extend(row.notes[0] for row in layout_blueprint.row_blueprint.rows if row.notes)
+    if layout_blueprint.raised_bed_blueprint is not None:
+        messages.extend(note for bed in layout_blueprint.raised_bed_blueprint.beds for note in bed.notes[:2])
+    if layout_blueprint.chaos_blueprint is not None:
+        messages.extend(layout_blueprint.chaos_blueprint.scatter_guidance[:3])
+    return messages[:8]
+
+
+def _unique(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def _layout_summary(candidate: LayoutCandidate, score: float) -> str:

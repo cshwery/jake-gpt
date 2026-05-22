@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Plant, PlantCompanionRelationship, PlantCultivar, PlantFamily
 from app.schemas.garden import GardenContextDTO
+from app.engines.recommendations.hardiness import hardiness_warning, is_hardiness_compatible, should_exclude_for_hardiness, zone_number
 from app.services.companions import CompanionGraphService, NEGATIVE_RELATIONSHIP_TYPES, STRONG_NEGATIVE_RELATIONSHIP_TYPES
 
 GoalValue = Literal["food", "flowers", "shade", "pollinators", "low_maintenance", "kid_friendly", "herbs", "fruit", "trees", "native_plants", "combination"]
@@ -178,6 +179,8 @@ class GardenRecommendationService:
         recommendations: list[PlantRecommendation] = []
         excluded: list[ExcludedCandidate] = []
         warnings = self._selected_warnings(selected)
+        selected_warnings = self._selected_hardiness_warnings(selected, garden_context)
+        warnings.extend(selected_warnings)
         assumptions = list(garden_context.assumptions)
         if garden_context.sunlight.category == "unknown":
             assumptions.append("Sunlight category is unknown, so sunlight fit was not scored.")
@@ -187,6 +190,16 @@ class GardenRecommendationService:
                 continue
             if plant.slug in excluded_slugs:
                 excluded.append(ExcludedCandidate(plant_slug=plant.slug, reason_codes=["USER_EXCLUDED"], message="User excluded this plant."))
+                continue
+            zone = zone_number(garden_context.hardiness.zone)
+            if should_exclude_for_hardiness(plant, zone):
+                excluded.append(
+                    ExcludedCandidate(
+                        plant_slug=plant.slug,
+                        reason_codes=["HARDINESS_MISMATCH"],
+                        message=hardiness_warning(plant, zone) or f"{plant.common_name} is not recommended for this hardiness zone.",
+                    )
+                )
                 continue
             recommendation = self._score_plant(plant, garden_context, user_goals, selected)
             if recommendation.score < -40:
@@ -344,6 +357,17 @@ class GardenRecommendationService:
                 warning = self.family_service.get_family_conflict_warning(plant_slug, other_slug)
                 if warning:
                     warnings.append(RecommendationWarning(warning_type="same_family", plant_slugs=[plant_slug, other_slug], severity="low", message=warning))
+        return warnings
+
+    def _selected_hardiness_warnings(self, selected: list[str], context: GardenContextDTO) -> list[RecommendationWarning]:
+        zone = zone_number(context.hardiness.zone)
+        warnings: list[RecommendationWarning] = []
+        for plant_slug in selected:
+            plant = self.plants_by_slug.get(plant_slug)
+            if plant is None or is_hardiness_compatible(plant, zone):
+                continue
+            message = hardiness_warning(plant, zone) or f"{plant.common_name.title()} may not survive winter in your hardiness zone."
+            warnings.append(RecommendationWarning(warning_type="hardiness_mismatch", plant_slugs=[plant_slug], severity="high", message=message))
         return warnings
 
     def _apply_diversity(self, recommendations: list[PlantRecommendation], goals: GardenGoalInput) -> list[PlantRecommendation]:

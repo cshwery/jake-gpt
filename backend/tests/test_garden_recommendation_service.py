@@ -18,11 +18,38 @@ def test_hardiness_scoring_perennial_mismatch_is_severe_but_annual_is_not() -> N
 
     result = service.recommend_for_garden(_context(zone="5b"), _goals(["food"]), [], [], limit=10, include_excluded=True)
 
-    apple = _rec(result, "apple")
+    apple = _excluded(result, "apple")
     tomato = _rec(result, "tomato")
-    assert apple.score_breakdown.hardiness_score == -100
     assert "HARDINESS_MISMATCH" in apple.reason_codes
+    assert "not recommended for your hardiness zone" in apple.message
     assert tomato.score_breakdown.hardiness_score == -10
+
+
+def test_hardiness_filter_excludes_incompatible_perennial_and_tree_but_not_annual() -> None:
+    service = _service(
+        [
+            _plant(1, "apple", tree=True, perennial=True, min_zone=8, max_zone=10),
+            _plant(2, "lavender", edible=False, perennial=True, min_zone=8, max_zone=10),
+            _plant(3, "tomato", min_zone=8, max_zone=10),
+        ]
+    )
+
+    result = service.recommend_for_garden(_context(zone="5b"), _goals(["food"]), [], [], limit=10, include_excluded=True)
+
+    assert _excluded(result, "apple").reason_codes == ["HARDINESS_MISMATCH"]
+    assert _excluded(result, "lavender").reason_codes == ["HARDINESS_MISMATCH"]
+    assert _rec(result, "tomato").plant_slug == "tomato"
+
+
+def test_selected_incompatible_plant_remains_selected_with_warning() -> None:
+    service = _service([_plant(1, "apple", tree=True, perennial=True, min_zone=8, max_zone=10), _plant(2, "tomato")])
+
+    result = service.recommend_for_garden(_context(zone="5b"), _goals(["food"]), ["apple"], [], limit=10)
+
+    assert "apple" in result.selected
+    warning = next(item for item in result.warnings if item.warning_type == "hardiness_mismatch")
+    assert warning.plant_slugs == ["apple"]
+    assert "may not survive winter" in warning.message
 
 
 def test_sunlight_scoring_full_sun_match_and_shade_penalty() -> None:
@@ -359,6 +386,13 @@ def _rec(result, slug: str):
         if excluded.plant_slug == slug:
             raise AssertionError(f"{slug} was excluded: {excluded.message}")
     raise AssertionError(f"missing recommendation for {slug}")
+
+
+def _excluded(result, slug: str):
+    for excluded in result.excluded:
+        if excluded.plant_slug == slug:
+            return excluded
+    raise AssertionError(f"missing excluded candidate for {slug}")
 
 
 def _fake_result() -> GardenRecommendationResult:

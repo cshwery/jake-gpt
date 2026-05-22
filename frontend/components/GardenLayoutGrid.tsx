@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import type { GeneratedPlan, LayoutResult } from "@/types/api";
+import type { GeneratedPlan, LayoutBlueprint, LayoutResult, PlantSymbol } from "@/types/api";
 import { areaCategory as areaCategoryLabel, layoutQualityLabel, subscoreLabel, titleCase } from "@/lib/product";
 
 type Props = {
@@ -67,17 +67,18 @@ export function GardenLayoutGrid({ layout, generatedPlan, title = "Layout", show
         <div>
           <div className="mb-2 text-xs font-medium uppercase text-foreground/50">North ↑</div>
           {normalized.grid.layout_style === "chaos" ? (
-            <ChaosLayoutView placements={normalized.placements} metadata={normalized.grid.layout_metadata} warnings={normalized.warnings} />
+            <ChaosLayoutView placements={normalized.placements} metadata={normalized.grid.layout_metadata} warnings={normalized.warnings} blueprint={normalized.layout_blueprint} />
           ) : normalized.grid.layout_style === "rows" ? (
-            <RowLayoutView placements={normalized.placements} />
+            <RowLayoutView placements={normalized.placements} blueprint={normalized.layout_blueprint} />
           ) : normalized.grid.layout_style === "raised_beds" ? (
-            <RaisedBedsView cells={normalized.grid.cells} placements={normalized.placements} metadata={normalized.grid.layout_metadata} />
+            <RaisedBedsView cells={normalized.grid.cells} placements={normalized.placements} metadata={normalized.grid.layout_metadata} blueprint={normalized.layout_blueprint} />
           ) : (
             <GridLayoutView cells={normalized.grid.cells} placements={normalized.placements} cols={normalized.grid.cols} />
           )}
         </div>
 
         <div className="space-y-3 text-sm">
+          {normalized.design_plan ? <PlantingDesignInsight designPlan={normalized.design_plan} layoutStyle={normalized.grid.layout_style} /> : null}
           {normalized.score_breakdown ? (
             <div className="rounded-md border border-border bg-muted/30 p-3">
               <div className="mb-2 font-semibold">Layout quality</div>
@@ -140,6 +141,8 @@ function normalizeLayout(layout: LayoutResult) {
     grid: { ...layout.grid, layout_style: layout.grid.layout_style ?? "grid", layout_metadata: layout.grid.layout_metadata ?? {} },
     placements: layout.placements,
     score_breakdown: layout.score_breakdown,
+    design_plan: layout.design_plan ?? null,
+    layout_blueprint: layout.layout_blueprint ?? null,
     warnings: layout.warnings ?? [],
     explanations: layout.explanations ?? [],
     assumptions: layout.assumptions ?? [],
@@ -196,6 +199,8 @@ function normalizePlan(plan?: GeneratedPlan | null) {
       placement_role: "crop"
     })),
     score_breakdown: null,
+    design_plan: null,
+    layout_blueprint: null,
     warnings: [],
     explanations: [],
     assumptions: [],
@@ -256,7 +261,47 @@ function GridLayoutView({ cells, placements, cols }: { cells: NormalizedCell[]; 
   );
 }
 
-function RowLayoutView({ placements }: { placements: LayoutResult["placements"] }) {
+function RowLayoutView({ placements, blueprint }: { placements: LayoutResult["placements"]; blueprint?: LayoutBlueprint | null }) {
+  const rows = blueprint?.row_blueprint?.rows ?? [];
+  if (rows.length) {
+    const activeBlueprint = blueprint as LayoutBlueprint;
+    return (
+      <div className="space-y-4">
+        {blueprint?.tree_shrub_section?.items.length ? <BlueprintTreeBushLegend section={blueprint.tree_shrub_section} /> : null}
+        <div className="rounded-md border border-border bg-muted/20 p-3">
+          <div className="mb-2 font-semibold">Rows</div>
+          <div className="space-y-2 text-sm">
+            {rows.map((row) => (
+              <div key={row.row_number} className="flex flex-wrap items-start justify-between gap-3 rounded border border-border bg-white px-3 py-2">
+                <div>
+                  <div className="font-medium">Row {row.row_number} — {row.row_label}</div>
+                  {row.companion_plants.length || row.border_plants.length ? (
+                    <div className="mt-1 text-xs text-foreground/70">
+                      {row.companion_plants.length ? `Companions: ${row.companion_plants.map((slug) => displaySymbolName(slug, activeBlueprint)).join(", ")}` : ""}
+                      {row.companion_plants.length && row.border_plants.length ? " · " : ""}
+                      {row.border_plants.length ? `Borders: ${row.border_plants.map((slug) => displaySymbolName(slug, activeBlueprint)).join(", ")}` : ""}
+                    </div>
+                  ) : null}
+                  {row.notes.length ? <div className="mt-1 text-xs text-foreground/70">{row.notes.join(" ")}</div> : null}
+                </div>
+                <div className="text-right text-foreground/70">
+                  {row.spacing_from_prior_row_inches == null ? "start at north edge" : `${row.spacing_from_prior_row_inches} in from prior row`} · {row.in_row_spacing_inches ?? 0} in in-row
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+        {activeBlueprint.row_blueprint?.row_spacing_notes.length ? <MessageBlock title="Keep apart notes" items={activeBlueprint.row_blueprint.row_spacing_notes} tone="warning" /> : null}
+        <div className="rounded-md border border-border bg-white p-3">
+          <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+            <div className="font-semibold">Row diagram</div>
+            <div className="text-xs text-foreground/60">{activeBlueprint.row_blueprint?.north_orientation ?? "North ↑ · rows run west to east"}</div>
+          </div>
+          <BlueprintRowDiagram rows={rows} labelFrequency={activeBlueprint.row_blueprint?.diagram_label_frequency ?? rowLabelInterval(rows.length)} treeSection={activeBlueprint.tree_shrub_section ?? null} />
+        </div>
+      </div>
+    );
+  }
   const rowPlacements = placements.filter((item) => item.placement_role !== "tree" && item.placement_role !== "shrub").sort((a, b) => (a.row ?? 0) - (b.row ?? 0));
   const woodyPlacements = placements.filter((item) => item.placement_role === "tree" || item.placement_role === "shrub");
   const rowSymbols = buildSymbolMap(rowPlacements);
@@ -286,7 +331,29 @@ function RowLayoutView({ placements }: { placements: LayoutResult["placements"] 
   );
 }
 
-function RaisedBedsView({ cells, placements, metadata }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; metadata?: Record<string, unknown> }) {
+function RaisedBedsView({ cells, placements, metadata, blueprint }: { cells: NormalizedCell[]; placements: LayoutResult["placements"]; metadata?: Record<string, unknown>; blueprint?: LayoutBlueprint | null }) {
+  const beds = blueprint?.raised_bed_blueprint?.beds ?? [];
+  if (beds.length) {
+    return (
+      <div className="space-y-4">
+        {blueprint?.tree_shrub_section?.items.length ? <BlueprintTreeBushLegend section={blueprint.tree_shrub_section} /> : null}
+        <div className="grid gap-4 xl:grid-cols-2">
+          {beds.map((bed) => (
+            <div key={bed.bed_id} className="rounded-md border border-emerald-200 bg-emerald-50/30 p-4">
+              <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                <div className="text-base font-semibold">{bed.bed_name}</div>
+                <div className="text-sm text-foreground/70">{bed.width_ft} ft × {bed.length_ft} ft</div>
+              </div>
+              <BlueprintSymbolLegend symbols={bed.symbol_legend} />
+              <BlueprintRaisedBedSvg bed={bed} />
+              {bed.notes.length ? <MessageBlock title="Why plants are grouped" items={bed.notes} /> : null}
+              {bed.warnings.length ? <MessageBlock title="Warnings" items={bed.warnings} tone="warning" /> : null}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   const groups = Array.from(new Set(cells.map((cell) => cell.group_id ?? "ungrouped"))).filter((group) => group !== "path" && group !== "ungrouped");
   if (!groups.length) return <GridLayoutView cells={cells} placements={placements} cols={4} />;
   const symbols = buildSymbolMap(placements);
@@ -384,7 +451,90 @@ function RowDiagram({ rows, rowSymbols, woody, woodySymbols }: { rows: Normalize
   );
 }
 
-function ChaosLayoutView({ placements, metadata, warnings }: { placements: NormalizedPlacement[]; metadata?: Record<string, unknown>; warnings: string[] }) {
+function BlueprintRowDiagram({ rows, labelFrequency, treeSection }: { rows: NonNullable<LayoutBlueprint["row_blueprint"]>["rows"]; labelFrequency: number; treeSection?: NonNullable<LayoutBlueprint["tree_shrub_section"]> | null }) {
+  const rowGap = 92 / Math.max(rows.length, 1);
+  return (
+    <svg className="h-72 w-full rounded border border-border bg-white" viewBox="0 0 320 210" role="img" aria-label="Row planting diagram">
+      <text x="16" y="20" className="fill-slate-700 text-[11px] font-semibold">North ↑</text>
+      <rect x="18" y="34" width="284" height="152" rx="3" fill="#f8fafc" stroke="#334155" strokeWidth="1.5" />
+      {rows.map((row, index) => {
+        const y = 54 + index * rowGap;
+        return (
+          <g key={row.row_number}>
+            <line x1="34" x2="286" y1={y} y2={y} stroke={row.row_role === "pollinator_border" ? "#d97706" : "#15803d"} strokeWidth="3" />
+            {index % labelFrequency === 0 ? <text x="42" y={y - 6} className="fill-slate-900 text-[10px] font-semibold">Row {row.row_number}: {row.row_label}</text> : null}
+          </g>
+        );
+      })}
+      {(treeSection?.items ?? []).map((item, index) => (
+        <g key={item.symbol}>
+          <circle cx={52 + index * 38} cy="170" r="13" fill="#e7e5e4" stroke="#78716c" />
+          <text x={52 + index * 38} y="174" textAnchor="middle" className="fill-slate-900 text-[9px] font-bold">{item.symbol}</text>
+        </g>
+      ))}
+      <text x="160" y="202" textAnchor="middle" className="fill-slate-500 text-[9px]">Rows run west to east</text>
+    </svg>
+  );
+}
+
+function BlueprintRaisedBedSvg({ bed }: { bed: NonNullable<LayoutBlueprint["raised_bed_blueprint"]>["beds"][number] }) {
+  const allPlantings = [...bed.plantings, ...bed.border_plantings];
+  const tokens = allPlantings.flatMap((planting) =>
+    Array.from({ length: Math.max(1, Math.min(planting.quantity ?? 1, 120)) }, (_, index) => ({
+      key: `${planting.plant_slug}-${planting.approximate_zone}-${index}`,
+      symbol: planting.symbol,
+      zone: planting.approximate_zone,
+    }))
+  );
+  const total = tokens.length;
+  const columns = Math.max(2, Math.ceil(Math.sqrt(total * Math.max(bed.length_ft / Math.max(bed.width_ft, 1), 1))));
+  const rows = Math.max(1, Math.ceil(total / columns));
+  const fontSize = total > 96 ? 5 : total > 60 ? 6 : total > 32 ? 7 : 9;
+  return (
+    <svg className="mt-3 h-80 w-full rounded border border-emerald-300 bg-white" viewBox="0 0 320 210" role="img" aria-label={`${bed.bed_name} raised bed`}>
+      <text x="14" y="20" className="fill-slate-700 text-[10px] font-semibold">North ↑</text>
+      <text x="306" y="20" textAnchor="end" className="fill-slate-500 text-[9px]">{bed.width_ft} ft × {bed.length_ft} ft</text>
+      <rect x="20" y="34" width="280" height="150" rx="3" fill="#f7fee7" stroke="#15803d" strokeWidth="2" />
+      {tokens.map((token, index) => {
+        const colIndex = index % columns;
+        const rowIndex = Math.floor(index / columns);
+        const x = 34 + (colIndex + 0.5) * (252 / Math.max(columns, 1));
+        const y = 48 + (rowIndex + 0.5) * (122 / Math.max(rows, 1));
+        const border = token.zone === "border" || token.zone === "corner";
+        return (
+          <g key={token.key}>
+            <circle cx={x} cy={y} r={fontSize + 4} fill={border ? "#fef3c7" : "#dcfce7"} stroke={border ? "#d97706" : "#16a34a"} />
+            <text x={x} y={y + fontSize / 3} textAnchor="middle" className="fill-slate-900 font-bold" style={{ fontSize }}>{token.symbol}</text>
+          </g>
+        );
+      })}
+      {allPlantings.some((planting) => (planting.quantity ?? 1) > 120) ? <text x="160" y="202" textAnchor="middle" className="fill-slate-600 text-[8px]">Very high quantities are summarized after the first 120 plantings.</text> : null}
+    </svg>
+  );
+}
+
+function ChaosLayoutView({ placements, metadata, warnings, blueprint }: { placements: NormalizedPlacement[]; metadata?: Record<string, unknown>; warnings: string[]; blueprint?: LayoutBlueprint | null }) {
+  if (blueprint?.chaos_blueprint) {
+    const chaos = blueprint.chaos_blueprint;
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+          <div className="text-base font-semibold">Chaos Garden Guidance</div>
+          <p className="mt-1 text-sm text-amber-950">Chaos mode gives guidance rather than a detailed placement map. Use clusters, borders, and separation notes instead of rows or beds.</p>
+          <div className="mt-3 text-sm font-medium">Suggested plant type range: {chaos.suggested_plant_count_range}</div>
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <ChaosGroup title="Easy direct-sow crops" items={chaos.easy_direct_sow_plants} />
+          <ChaosGroup title="Low-maintenance plants" items={chaos.low_maintenance_plants} />
+          <ChaosGroup title="Pollinator/support flowers" items={chaos.pollinator_support_plants} />
+          <ChaosGroup title="Avoid or separate" items={chaos.plants_to_isolate} />
+        </div>
+        <MessageBlock title="Scatter and cluster guidance" items={chaos.scatter_guidance} />
+        {chaos.keep_apart_notes.length ? <MessageBlock title="Keep apart notes" items={chaos.keep_apart_notes} tone="warning" /> : null}
+        {chaos.warnings.length ? <MessageBlock title="Warnings" items={chaos.warnings} tone="warning" /> : null}
+      </div>
+    );
+  }
   const groups = chaosGroups(placements, metadata);
   const guidance = stringArrayMetadata(metadata, "guidance");
   const suggestedRange = typeof metadata?.suggested_plant_count_range === "string" ? metadata.suggested_plant_count_range : "6-12";
@@ -411,6 +561,39 @@ function ChaosLayoutView({ placements, metadata, warnings }: { placements: Norma
   );
 }
 
+function ChaosGroup({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="rounded-md border border-border bg-white p-3">
+      <div className="mb-2 font-semibold">{title}</div>
+      <div className="space-y-1 text-sm text-foreground/70">
+        {items.length ? items.map((item) => <div key={item}>• {item}</div>) : <div>Not enough selected plants for this group.</div>}
+      </div>
+    </div>
+  );
+}
+
+function PlantingDesignInsight({ designPlan, layoutStyle }: { designPlan: NonNullable<LayoutResult["design_plan"]>; layoutStyle?: string | null }) {
+  const styleGuidance =
+    layoutStyle === "raised_beds"
+      ? designPlan.placement_guidance.raised_beds_guidance
+      : layoutStyle === "rows"
+        ? designPlan.placement_guidance.rows_guidance
+        : layoutStyle === "chaos"
+          ? designPlan.placement_guidance.chaos_guidance
+          : [];
+  const clusterNotes = designPlan.companion_clusters.slice(0, 3).map((cluster) => cluster.placement_guidance);
+  const separation = designPlan.separation_rules.slice(0, 3).map((rule) => rule.rationale);
+  const items = uniqueStrings([
+    designPlan.summary,
+    ...clusterNotes,
+    ...styleGuidance,
+    ...designPlan.placement_guidance.border_guidance,
+    ...designPlan.placement_guidance.north_south_guidance,
+    ...separation
+  ]).slice(0, 7);
+  return <MessageBlock title="Planting design" items={items} />;
+}
+
 function PlantSymbolLegend({ placements, symbols }: { placements: NormalizedPlacement[]; symbols: Map<string, string> }) {
   if (!placements.length) return null;
   return (
@@ -419,6 +602,15 @@ function PlantSymbolLegend({ placements, symbols }: { placements: NormalizedPlac
         const name = displayPlacementName(placement);
         return <div key={`${placement.plant_slug}-${placement.cultivar_slug ?? ""}`}><span className="font-semibold">{symbols.get(name)}</span> — {name}</div>;
       })}
+    </div>
+  );
+}
+
+function BlueprintSymbolLegend({ symbols }: { symbols: PlantSymbol[] }) {
+  if (!symbols.length) return null;
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+      {symbols.map((symbol) => <div key={`${symbol.plant_slug}-${symbol.symbol}`}><span className="font-semibold">{symbol.symbol}</span> — {symbol.display_name}</div>)}
     </div>
   );
 }
@@ -432,6 +624,23 @@ function TreeBushLegend({ placements, symbols }: { placements: NormalizedPlaceme
           const name = displayPlacementName(placement);
           return <div key={`${placement.plant_slug}-${placement.cultivar_slug ?? ""}`}><span className="font-semibold">{symbols.get(name)}</span> — {name}</div>;
         })}
+      </div>
+    </div>
+  );
+}
+
+function BlueprintTreeBushLegend({ section }: { section: NonNullable<LayoutBlueprint["tree_shrub_section"]> }) {
+  return (
+    <div className="rounded-md border border-stone-300 bg-stone-50 p-3">
+      <div className="mb-2 font-semibold">Trees & Bushes</div>
+      <div className="grid gap-1 text-sm sm:grid-cols-2">
+        {section.items.map((item) => (
+          <div key={`${item.plant_slug}-${item.symbol}`}>
+            <span className="font-semibold">{item.symbol}</span> — {item.display_name}
+            <div className="text-xs text-foreground/70">{item.placement_guidance}</div>
+            {item.warning ? <div className="text-xs text-amber-800">{item.warning}</div> : null}
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -544,6 +753,11 @@ function chaosGroups(placements: NormalizedPlacement[], metadata?: Record<string
 
 function normalizeGroup(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function displaySymbolName(slug: string, blueprint: LayoutBlueprint) {
+  const symbol = blueprint.plant_symbols.find((item) => item.plant_slug === slug);
+  return symbol ? `${symbol.display_name} (${symbol.symbol})` : titleCase(slug.replace(/[_-]/g, " "));
 }
 
 function rowLabelInterval(count: number) {

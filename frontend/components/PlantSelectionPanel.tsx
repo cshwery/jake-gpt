@@ -28,6 +28,8 @@ type Props = {
   onGenerateRecommendations: () => Promise<void>;
   onGenerateLayout: () => Promise<LayoutResult | void>;
   loadingRecommendations?: boolean;
+  showIncompatiblePlants?: boolean;
+  setShowIncompatiblePlants?: (value: boolean) => void;
 };
 
 export function PlantSelectionPanel({
@@ -40,7 +42,9 @@ export function PlantSelectionPanel({
   goals,
   onGenerateRecommendations,
   onGenerateLayout,
-  loadingRecommendations = false
+  loadingRecommendations = false,
+  showIncompatiblePlants = false,
+  setShowIncompatiblePlants
 }: Props) {
   const selectedKeys = new Set(selectedPlants.map((item) => item.selection_key));
   const species = dedupePlantResults(plantResults.filter((item) => item.result_type === "species"));
@@ -63,6 +67,12 @@ export function PlantSelectionPanel({
               {loadingRecommendations ? "Generating..." : "Generate Recommendations"}
             </Button>
           </div>
+          {setShowIncompatiblePlants ? (
+            <label className="mt-3 flex items-center gap-2 text-sm text-foreground/70">
+              <input type="checkbox" checked={showIncompatiblePlants} onChange={(event) => setShowIncompatiblePlants(event.target.checked)} />
+              Show plants not recommended for my zone
+            </label>
+          ) : null}
         </Card>
 
         {recommendations ? (
@@ -255,6 +265,7 @@ function PlantCard({ plant, selected, onToggle }: { plant: PlantSearchResult; se
         <span className="rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs">{selected ? "Added ✓" : "Add"}</span>
       </div>
       <div className="mt-2 text-foreground/60">{plant.sunlight_requirement} · zone {plant.min_zone}-{plant.max_zone}</div>
+      {plant.hardiness_warning ? <div className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">{plant.hardiness_warning}</div> : null}
     </button>
   );
 }

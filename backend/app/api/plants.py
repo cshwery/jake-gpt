@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.db.session import get_db
 from app.models import Garden, GardenContext, Plant, PlantCultivar, User
+from app.engines.recommendations.hardiness import context_zone_number, hardiness_warning, is_hardiness_compatible, should_exclude_for_hardiness
 from app.schemas.garden import context_to_dto
 from app.schemas.plant import PlantSearchResult, PlantSuggestion, SuggestRequest
 from app.services.garden_recommendations import GardenGoalInput, GardenRecommendationResult, GardenRecommendationService
@@ -17,16 +18,27 @@ router = APIRouter(prefix="/plants", tags=["plants"])
 @router.get("", response_model=list[PlantSearchResult])
 def search_plants(
     q: str | None = Query(default=None),
+    garden_id: int | None = Query(default=None),
+    include_incompatible: bool = Query(default=False),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> list[PlantSearchResult]:
+    zone = _garden_zone(garden_id, db, user)
     stmt = select(Plant).order_by(Plant.common_name)
     if q:
         stmt = stmt.where(Plant.common_name.ilike(f"%{q}%") | Plant.slug.ilike(f"%{q}%"))
     plants = _dedupe_species(list(db.scalars(stmt).all()))
+    if zone is not None and not include_incompatible:
+        plants = [plant for plant in plants if not should_exclude_for_hardiness(plant, zone)]
     results = [
         PlantSearchResult.model_validate(plant).model_copy(
-            update={"result_type": "species", "plant_id": plant.id, "display_name": _title_case(plant.common_name)}
+            update={
+                "result_type": "species",
+                "plant_id": plant.id,
+                "display_name": _title_case(plant.common_name),
+                "hardiness_compatible": is_hardiness_compatible(plant, zone),
+                "hardiness_warning": hardiness_warning(plant, zone),
+            }
         )
         for plant in plants
     ]
@@ -43,6 +55,8 @@ def search_plants(
             .order_by(Plant.common_name, PlantCultivar.cultivar_name)
         )
         for cultivar, plant in db.execute(cultivar_stmt):
+            if zone is not None and not include_incompatible and should_exclude_for_hardiness(plant, zone):
+                continue
             results.append(
                 PlantSearchResult.model_validate(plant).model_copy(
                     update={
@@ -53,10 +67,22 @@ def search_plants(
                         "cultivar_name": cultivar.cultivar_name,
                         "display_name": f"{_title_case(plant.common_name)} — {cultivar.cultivar_name}",
                         "cultivar_notes": cultivar.notes,
+                        "hardiness_compatible": is_hardiness_compatible(plant, zone),
+                        "hardiness_warning": hardiness_warning(plant, zone),
                     }
                 )
             )
     return results
+
+
+def _garden_zone(garden_id: int | None, db: Session, user: User) -> int | None:
+    if garden_id is None:
+        return None
+    garden = db.get(Garden, garden_id)
+    if garden is None or garden.property.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Garden not found")
+    context = db.scalar(select(GardenContext).where(GardenContext.garden_id == garden_id))
+    return context_zone_number(context_to_dto(context)) if context else None
 
 
 def _dedupe_species(plants: list[Plant]) -> list[Plant]:

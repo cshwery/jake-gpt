@@ -32,6 +32,8 @@ class PlantSearchResult(PlantRead):
     cultivar_name: str | None = None
     display_name: str | None = None
     cultivar_notes: str | None = None
+    hardiness_compatible: bool | None = None
+    hardiness_warning: str | None = None
 
 
 class SuggestRequest(BaseModel):

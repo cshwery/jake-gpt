@@ -33,6 +33,7 @@ export default function Home() {
   const [recommendations, setRecommendations] = useState<GardenRecommendationResult | null>(null);
   const [selectedPlants, setSelectedPlants] = useState<SelectedPlantItem[]>([]);
   const [loadingRecommendations, setLoadingRecommendations] = useState(false);
+  const [showIncompatiblePlants, setShowIncompatiblePlants] = useState(false);
   const [savingGarden, setSavingGarden] = useState(false);
   const [goals, setGoals] = useState<GardenGoals>({
     goal: "Food",
@@ -69,7 +70,11 @@ export default function Home() {
     const timer = window.setTimeout(async () => {
       try {
         const query = plantQuery.trim();
-        const result = await api.request<PlantSearchResult[]>(query ? `/plants?q=${encodeURIComponent(query)}` : "/plants");
+        const params = new URLSearchParams();
+        if (query) params.set("q", query);
+        if (garden?.id) params.set("garden_id", String(garden.id));
+        if (showIncompatiblePlants) params.set("include_incompatible", "true");
+        const result = await api.request<PlantSearchResult[]>(`/plants${params.toString() ? `?${params.toString()}` : ""}`);
         if (active) setPlantResults(dedupePlantResults(result));
       } catch (err) {
         if (active) {
@@ -81,7 +86,7 @@ export default function Home() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [api, plantQuery, step]);
+  }, [api, plantQuery, step, garden?.id, showIncompatiblePlants]);
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -205,7 +210,10 @@ export default function Home() {
   async function continueToPlants() {
     setError(null);
     try {
-      const allPlants = await api.request<PlantSearchResult[]>("/plants");
+      const params = new URLSearchParams();
+      if (garden?.id) params.set("garden_id", String(garden.id));
+      if (showIncompatiblePlants) params.set("include_incompatible", "true");
+      const allPlants = await api.request<PlantSearchResult[]>(`/plants${params.toString() ? `?${params.toString()}` : ""}`);
       setPlantResults(dedupePlantResults(allPlants));
       setPlantQuery("");
       setStep("plants");
@@ -229,6 +237,7 @@ export default function Home() {
     }
     setLoadingRecommendations(true);
     setError(null);
+    setRecommendations(null);
     try {
       const result = await api.request<GardenRecommendationResult>(`/gardens/${garden.id}/recommendations/generate`, {
         method: "POST",
@@ -389,6 +398,8 @@ export default function Home() {
             onGenerateRecommendations={loadSuggestions}
             onGenerateLayout={() => generateLayout("layout")}
             loadingRecommendations={loadingRecommendations}
+            showIncompatiblePlants={showIncompatiblePlants}
+            setShowIncompatiblePlants={setShowIncompatiblePlants}
           />
         ) : null}
         {step === "layout" && property && garden && layout ? (
